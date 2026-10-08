@@ -1,4 +1,4 @@
-From a8b009235b303e555d3a9ef3075a8d11b17bc749 Mon Sep 17 00:00:00 2001
+From 1f631f4159ff7b85c633e654607f0877a219f967 Mon Sep 17 00:00:00 2001
 From: Jewel Chowdhury <portgasdjewel@gmail.com>
 Date: Thu, 8 Oct 2026 15:40:28 +0000
 Subject: [PATCH 2/5] new feature: double-click selects a word, triple-click

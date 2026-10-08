@@ -1,4 +1,4 @@
-From c58f0e75ad4573ac82753f90d34bec47185c3576 Mon Sep 17 00:00:00 2001
+From 943d1dc2946fb5cf9d01032089e0476ce09339b4 Mon Sep 17 00:00:00 2001
 From: Jewel Chowdhury <portgasdjewel@gmail.com>
 Date: Thu, 8 Oct 2026 15:38:13 +0000
 Subject: [PATCH 1/5] new feature: allow selecting text by dragging the mouse
@@ -16,16 +16,17 @@ mouse, after a resize or a suspension.  The click interval is set to zero
 to get the raw presses and releases.
 
 When several mouse events arrive together, ncurses reports them with one
-KEY_MOUSE, and getmouse() then returns them newest first.  So, fetch all
-of them, and handle them oldest first.
+KEY_MOUSE, after which getmouse() returns them one by one.  So, fetch all
+of them, and handle them oldest first.  (Since its 20250913 patch, ncurses
+returns such a run of events oldest first; before, newest first.)
 
 Assisted-by: Claude (Anthropic)
 ---
  src/global.c     |   4 +
  src/nano.c       | 193 ++++++++++++++++++++++++++++++++++++++++++-----
  src/prototypes.h |   5 ++
- src/winio.c      |  58 +++++++++++++-
- 4 files changed, 241 insertions(+), 19 deletions(-)
+ src/winio.c      |  91 +++++++++++++++++++++-
+ 4 files changed, 274 insertions(+), 19 deletions(-)
 
 diff --git a/src/global.c b/src/global.c
 index a7549ceb..d32a2545 100644
@@ -305,7 +306,7 @@ index d676d094..9460a52b 100644
  #endif
  void blank_edit(void);
 diff --git a/src/winio.c b/src/winio.c
-index e697d328..03b7e338 100644
+index e697d328..37234310 100644
 --- a/src/winio.c
 +++ b/src/winio.c
 @@ -198,6 +198,15 @@ void read_keys_from(WINDOW *frame)
@@ -337,28 +338,61 @@ index e697d328..03b7e338 100644
  #endif
  		input = wgetch(frame);
  
-@@ -1589,19 +1604,51 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+@@ -1589,19 +1604,84 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
  }
  
  #ifdef ENABLE_MOUSE
-+/* Mouse events that ncurses delivered together, the newest one first. */
++/* Mouse events that ncurses delivered together, the oldest one first. */
 +static MEVENT mouse_events[8];
-+static int mouse_events_waiting = 0;
++static int mouse_events_fetched = 0, mouse_events_waiting = 0;
++
++/* Return TRUE when getmouse() returns a run of events oldest first, as
++ * ncurses does since its 20250913 patch.  Earlier, the newest came first. */
++static bool oldest_comes_first(void)
++{
++	static int answer = -1;
++
++	if (answer < 0) {
++		long patch = 0;
++
++#ifdef NCURSES_VERSION
++		answer = (sscanf(curses_version(), "ncurses %*d.%*d.%ld", &patch) != 1 ||
++						patch >= 20250913);
++#else
++		answer = TRUE;
++#endif
++	}
++
++	return answer;
++}
 +
 +/* Get the oldest mouse event that has not yet been handled.  When mouse
 + * events arrive in quick succession, ncurses reports them with a single
-+ * KEY_MOUSE, and getmouse() then returns them one by one, newest first. */
++ * KEY_MOUSE, and getmouse() then returns them one by one. */
 +bool fetch_mouse_event(MEVENT *event)
 +{
-+	if (mouse_events_waiting == 0)
-+		while (mouse_events_waiting < 8 &&
-+						getmouse(&mouse_events[mouse_events_waiting]) == OK)
-+			mouse_events_waiting++;
++	if (mouse_events_waiting == 0) {
++		mouse_events_fetched = 0;
++
++		while (mouse_events_fetched < 8 &&
++						getmouse(&mouse_events[mouse_events_fetched]) == OK)
++			mouse_events_fetched++;
++
++		if (!oldest_comes_first())
++			for (int one = 0, other = mouse_events_fetched - 1; one < other; one++, other--) {
++				MEVENT swap = mouse_events[one];
++
++				mouse_events[one] = mouse_events[other];
++				mouse_events[other] = swap;
++			}
++
++		mouse_events_waiting = mouse_events_fetched;
++	}
 +
 +	if (mouse_events_waiting == 0)
 +		return FALSE;
 +
-+	*event = mouse_events[--mouse_events_waiting];
++	*event = mouse_events[mouse_events_fetched - mouse_events_waiting--];
 +	return TRUE;
 +}
 +
@@ -391,7 +425,7 @@ index e697d328..03b7e338 100644
  	in_middle = wenclose(midwin, event.y, event.x);
  	in_footer = wenclose(footwin, event.y, event.x);
  
-@@ -1679,6 +1726,13 @@ int get_mouseinput(int *mouse_y, int *mouse_x)
+@@ -1679,6 +1759,13 @@ int get_mouseinput(int *mouse_y, int *mouse_x)
  			/* Clicks outside of the bottom window are handled elsewhere. */
  			return 0;
  	}

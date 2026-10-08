@@ -21,6 +21,7 @@ This version is shaped to fit how nano is developed today:
 - **No status-bar hint and no help-screen section.** The man pages and the texinfo manual are updated instead.
 - **The scrollbar keeps working.** nano 9.0 made a click in the scrollbar column (`--indicator`) jump through the buffer, and a press there does not start a drag.
 - **The mouse wheel keeps working.** It scrolls the viewport exactly as in nano 9.x.
+- **Works with old and new ncurses.** ncurses changed the order in which `getmouse()` returns a burst of events (newest first before its 20250913 patch, oldest first since). The patches check the running ncurses version and handle both. The tests pass with ncurses 6.4 (Ubuntu 24.04) and 6.6 (Fedora Rawhide, Debian unstable).
 
 ## Try it
 
