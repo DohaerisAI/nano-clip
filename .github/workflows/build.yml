@@ -43,10 +43,10 @@ jobs:
       - name: Check, then uninstall
         run: |
           "$HOME/.local/bin/nano" --version | head -n 1
-          grep -q 'added by nano-mouse' "$HOME/.nanorc"
+          grep -q 'added by nano-clip' "$HOME/.nanorc"
           ./uninstall.sh
           test ! -e "$HOME/.local/bin/nano"
-          ! grep -qs 'added by nano-mouse' "$HOME/.nanorc"
+          ! grep -qs 'added by nano-clip' "$HOME/.nanorc"
 
       - name: Install system-wide, check, and uninstall
         run: |
@@ -139,7 +139,7 @@ jobs:
 
       - name: Package
         run: |
-          name="nano-mouse-nano${{ matrix.nano }}-linux-${{ matrix.arch }}"
+          name="nano-clip-nano${{ matrix.nano }}-linux-${{ matrix.arch }}"
           mkdir "$name"
           cp /usr/bin/nano LICENSE "$name/"
           cp packaging/BINARY-README.txt "$name/README.txt"
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.nano }}-${{ matrix.arch }}
-          path: nano-mouse-*.tar.gz*
+          path: nano-clip-*.tar.gz*
 
   # Install each ready-made binary with install.sh on a clean machine of its
   # system, then run all the tests against it.
@@ -196,8 +196,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" nano-mouse-*.tar.gz nano-mouse-*.tar.gz.sha256 \
-            --title "nano-mouse ${GITHUB_REF_NAME#v}" \
+          gh release create "$GITHUB_REF_NAME" nano-clip-*.tar.gz nano-clip-*.tar.gz.sha256 \
+            --title "nano-clip ${GITHUB_REF_NAME#v}" \
             --notes-file packaging/RELEASE-NOTES.md
 
   # Finally, run the real one-line command on each system, as a user would:

@@ -1,6 +1,6 @@
 import os, pty, sys, time, select, re, base64, fcntl, termios, struct, signal, shutil
 
-# Automated checks for the nano-mouse patch: drives nano in a pseudo-terminal
+# Automated checks for the nano-clip patch: drives nano in a pseudo-terminal
 # with xterm SGR mouse sequences and checks the OSC 52 payloads and saved files.
 #   python3 tests/nanotest.py               # all tests, against ~/.local/bin/nano
 #   NANO=path/to/nano python3 tests/nanotest.py t_drag_copy t_wheel
@@ -8,6 +8,7 @@ import tempfile
 #   FLAVOR=upstream NANO=... STOCK_NANO=...   # the opt-in variant proposed for nano 9.x
 NANO = os.environ.get("NANO", os.path.expanduser("~/.local/bin/nano"))
 WORK = os.environ.get("WORK") or tempfile.mkdtemp(prefix="nanotest-")
+os.makedirs(WORK, exist_ok=True)
 # "upstream": no built-in clipboard (copying uses nano's own OSC 52 binding from
 # sample.nanorc), and typing replaces a selection only with --zap.
 UP = os.environ.get("FLAVOR") == "upstream"

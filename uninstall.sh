@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Remove nano-mouse, as installed by install.sh.  The distribution's own nano
+# Remove nano-clip, as installed by install.sh.  The distribution's own nano
 # (/usr/bin/nano) takes over again.
 #
-#   curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/uninstall.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-clip/main/uninstall.sh | bash
 #
 #   ./uninstall.sh            remove the personal install (~/.local)
 #   ./uninstall.sh --system   remove the system-wide install (/usr/local, uses sudo)
@@ -21,10 +21,13 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-manifest="$prefix/share/nano-mouse/installed-files"
+manifest="$prefix/share/nano-clip/installed-files"
+# (This project used to be called nano-mouse.)
+[ -f "$manifest" ] || [ ! -f "$prefix/share/nano-mouse/installed-files" ] ||
+	manifest="$prefix/share/nano-mouse/installed-files"
 if [ ! -f "$manifest" ]; then
-	echo "nano-mouse is not installed in $prefix."
-	[ "$prefix" = "$HOME/.local" ] && [ -f /usr/local/share/nano-mouse/installed-files ] &&
+	echo "nano-clip is not installed in $prefix."
+	[ "$prefix" = "$HOME/.local" ] && [ -f /usr/local/share/nano-clip/installed-files ] &&
 		echo "It is installed system-wide; remove that with:  ./uninstall.sh --system"
 	exit 1
 fi
@@ -47,15 +50,15 @@ while IFS= read -r file; do
 done < "$manifest"
 
 # Remove directories that are now empty (never the prefix itself).
-run rmdir --ignore-fail-on-non-empty "$prefix/share/nano-mouse" "$prefix/share/nano" \
+run rmdir --ignore-fail-on-non-empty "$prefix/share/nano-clip" "$prefix/share/nano-mouse" "$prefix/share/nano" \
 	"$prefix/share/doc/nano" 2>/dev/null || true
 
 # Take out the 'set mouse' line that the installer added, and nothing else.
-if ! $system && grep -qs '# added by nano-mouse$' "$HOME/.nanorc"; then
-	sed -i '/# added by nano-mouse$/d' "$HOME/.nanorc"
+if ! $system && grep -qs '# added by nano-\(clip\|mouse\)$' "$HOME/.nanorc"; then
+	sed -i '/# added by nano-\(clip\|mouse\)$/d' "$HOME/.nanorc"
 	[ -s "$HOME/.nanorc" ] || rm -f "$HOME/.nanorc"
 fi
 
 hash -r 2>/dev/null || true
-echo "Removed nano-mouse ($count files)."
+echo "Removed nano-clip ($count files)."
 echo "'nano' now runs: $(command -v nano || echo 'nothing found in PATH') (open a new terminal if it still shows the old one)"

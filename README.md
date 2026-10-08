@@ -1,6 +1,6 @@
-# nano-mouse
+# nano-clip
 
-[![build](https://github.com/DohaerisAI/nano-mouse/actions/workflows/build.yml/badge.svg)](https://github.com/DohaerisAI/nano-mouse/actions/workflows/build.yml)
+[![build](https://github.com/DohaerisAI/nano-clip/actions/workflows/build.yml/badge.svg)](https://github.com/DohaerisAI/nano-clip/actions/workflows/build.yml)
 
 **Use your mouse in nano like in any other editor:** drag to select, double-click a word, and copy straight to your system clipboard.
 
@@ -9,7 +9,7 @@
 Open a terminal and paste this:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-clip/main/install.sh | bash
 ```
 
 That's it. Open a **new** terminal window and use `nano` as usual.
@@ -44,10 +44,10 @@ The first time you select something, nano shows a short hint at the bottom. Pres
 
 ## Undo
 
-To remove nano-mouse and get your normal nano back:
+To remove nano-clip and get your normal nano back:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-clip/main/uninstall.sh | bash
 ```
 
 ## Questions
@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/uninstal
 
 **Will a system update break it?** No. `apt upgrade` updates the system's nano in `/usr/bin` and never touches this one. Your settings (`~/.nanorc`) and colours stay the same.
 
-**Can I install it for every user on the machine?** Yes: `curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash -s -- --system`. This asks for your password, and installs into `/usr/local/bin`.
+**Can I install it for every user on the machine?** Yes: `curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-clip/main/install.sh | bash -s -- --system`. This asks for your password, and installs into `/usr/local/bin`.
 
 **I'd rather build it myself.** Clone the repository and run `./install.sh --from-source`. It downloads the official nano source, checks it, applies the patch, builds, and runs the automated tests before installing.
 
@@ -88,7 +88,7 @@ Everything works as before, except:
 ### How the installer works
 
 1. It reads `/etc/os-release` to find your system, and so which nano version it needs.
-2. It downloads the ready-made nano for that system and your CPU from [Releases](https://github.com/DohaerisAI/nano-mouse/releases), and checks its SHA-256 checksum.
+2. It downloads the ready-made nano for that system and your CPU from [Releases](https://github.com/DohaerisAI/nano-clip/releases), and checks its SHA-256 checksum.
 3. It installs it into `~/.local/bin`, which comes before `/usr/bin` in `PATH`, so `nano` runs the new one. It keeps a list of what it installed, so the uninstaller removes exactly that.
 4. It adds `set mouse` to `~/.nanorc`, marked so the uninstaller can remove it again.
 

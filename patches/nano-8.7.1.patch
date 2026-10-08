@@ -1,4 +1,4 @@
-nano-mouse for GNU nano 8.7.1 (Ubuntu 26.04 LTS)
+nano-clip for GNU nano 8.7.1 (Ubuntu 26.04 LTS)
 
 Editor-style mouse selection and system clipboard: drag to select (with
 autoscroll), double-click a word, triple-click a line, Alt/Shift+click to
@@ -8,7 +8,7 @@ the system clipboard (OSC 52).
 Applies to the official nano-8.7.1.tar.xz (sha256 76f0dcb248f2...):
   cd nano-8.7.1 && patch -p1 < nano-8.7.1.patch
 
-https://github.com/DohaerisAI/nano-mouse
+https://github.com/DohaerisAI/nano-clip
 License: GPL-3.0-or-later, the same as GNU nano.
 
 diff --git a/src/cut.c b/src/cut.c

@@ -12,7 +12,7 @@ The five patches apply to nano's git master at commit `4be01411` (2026-10-07, "v
 | 4 | new feature: with --zap, typed and pasted text replace a marked region | only with `--zap` |
 | 5 | docs: describe selecting text with the mouse, and the extended --zap | |
 
-## How this differs from nano-mouse for 7.2
+## How this differs from nano-clip for 7.2
 
 This version is shaped to fit how nano is developed today:
 
@@ -28,7 +28,7 @@ This version is shaped to fit how nano is developed today:
 ```sh
 git clone https://git.savannah.gnu.org/git/nano.git && cd nano
 git checkout 4be01411
-git am /path/to/nano-mouse/upstream/*.patch
+git am /path/to/nano-clip/upstream/*.patch
 ./autogen.sh && ./configure && make
 src/nano --mouse somefile
 ```

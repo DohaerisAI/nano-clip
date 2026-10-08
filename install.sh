@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# nano-mouse installer: GNU nano with mouse selection and system clipboard.
+# nano-clip installer: GNU nano with mouse selection and system clipboard.
 #
 # One line, no clone needed:
-#   curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-clip/main/install.sh | bash
 #
 # Or from a clone:   ./install.sh [options]
 #
@@ -11,7 +11,7 @@
 # and `uninstall.sh` puts everything back.
 set -euo pipefail
 
-REPO=DohaerisAI/nano-mouse
+REPO=DohaerisAI/nano-clip
 RAW="https://raw.githubusercontent.com/$REPO/main"
 # (NANO_MOUSE_RELEASES can point elsewhere, e.g. a local folder, for testing.)
 RELEASES="${NANO_MOUSE_RELEASES:-https://github.com/$REPO/releases/latest/download}"
@@ -25,7 +25,7 @@ nano_version=""
 
 usage() {
 	cat <<-EOF
-	Install nano-mouse: GNU nano with mouse selection and system clipboard.
+	Install nano-clip: GNU nano with mouse selection and system clipboard.
 
 	Usage: install.sh [options]
 
@@ -86,7 +86,7 @@ if [ -z "$nano_version" ]; then
 		ubuntu:24.04|debian:12)  nano_version=7.2 ;;
 		ubuntu:26.04)            nano_version=8.7.1 ;;
 		*)
-			die "nano-mouse supports Ubuntu 22.04, 24.04 and 26.04, and Debian 12.
+			die "nano-clip supports Ubuntu 22.04, 24.04 and 26.04, and Debian 12.
        This is $system_name.  (Experts: --nano VERSION builds a specific version.)" ;;
 	esac
 fi
@@ -95,7 +95,7 @@ case "$nano_version" in
 	6.2)   tarball_sha256=2bca1804bead6aaf4ad791f756e4749bb55ed860eec105a97fba864bc6a77cb3 ;;
 	7.2)   tarball_sha256=86f3442768bd2873cec693f83cdf80b4b444ad3cc14760b74361474fc87a4526 ;;
 	8.7.1) tarball_sha256=76f0dcb248f2e2f1251d4ecd20fd30fb400a360a3a37c6c340e0a52c2d1cdedf ;;
-	*) die "There is no nano-mouse for nano $nano_version (available: 6.2, 7.2, 8.7.1)." ;;
+	*) die "There is no nano-clip for nano $nano_version (available: 6.2, 7.2, 8.7.1)." ;;
 esac
 
 case "$(uname -m)" in
@@ -119,23 +119,30 @@ maybe_root() {
 	if $needs_root; then as_root "$@"; else "$@"; fi
 }
 
-manifest_dir="$prefix/share/nano-mouse"
+manifest_dir="$prefix/share/nano-clip"
 stage="$work/stage"
 mkdir -p "$stage"
 
 # --- 2a. The quick way: a ready-made binary, tested for this system. ---
 install_binary() {
-	local asset="nano-mouse-nano$nano_version-linux-$arch.tar.gz"
+	local asset="" name
 
 	say "Downloading the ready-made nano $nano_version for $arch"
-	fetch "$RELEASES/$asset" "$work/$asset" && fetch "$RELEASES/$asset.sha256" "$work/$asset.sha256" ||
-		return 1
+	# (Releases before the project was renamed used the name nano-mouse.)
+	for name in nano-clip nano-mouse; do
+		if fetch "$RELEASES/$name-nano$nano_version-linux-$arch.tar.gz.sha256" \
+					"$work/$name-nano$nano_version-linux-$arch.tar.gz.sha256"; then
+			asset="$name-nano$nano_version-linux-$arch.tar.gz"
+			break
+		fi
+	done
+	[ -n "$asset" ] && fetch "$RELEASES/$asset" "$work/$asset" || return 1
 
 	( cd "$work" && sha256sum -c --quiet "$asset.sha256" ) || die "The download is damaged (checksum mismatch)."
 	tar -xzf "$work/$asset" -C "$work"
 
 	mkdir -p "$stage$prefix/bin"
-	cp "$work"/nano-mouse-*/nano "$stage$prefix/bin/nano"
+	cp "$work"/"${asset%.tar.gz}"/nano "$stage$prefix/bin/nano"
 	ln -s nano "$stage$prefix/bin/rnano"
 	# A minimal system may lack the ncurses library that nano needs.
 	if ! "$stage$prefix/bin/nano" --version > /dev/null 2>&1; then
@@ -155,8 +162,8 @@ install_from_source() {
 	if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/patches/nano-$nano_version.patch" ]; then
 		here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	else
-		say "Downloading the nano-mouse patch"
-		here="$work/nano-mouse"
+		say "Downloading the nano-clip patch"
+		here="$work/nano-clip"
 		mkdir -p "$here/patches" "$here/tests"
 		fetch "$RAW/patches/nano-$nano_version.patch" "$here/patches/nano-$nano_version.patch" ||
 			die "Could not download the patch."
@@ -237,14 +244,26 @@ say "Installing into $prefix"
 		> "$work/installed-files"
 echo "$manifest_dir/installed-files" >> "$work/installed-files"
 
+# This project used to be called nano-mouse: take over the list of files of
+# such an earlier installation, so that uninstall.sh removes those too.
+old_manifest="$prefix/share/nano-mouse/installed-files"
+if [ -f "$old_manifest" ]; then
+	grep -v '/share/nano-mouse/' "$old_manifest" >> "$work/installed-files" || true
+	sort -u -o "$work/installed-files" "$work/installed-files"
+fi
+
 maybe_root mkdir -p "$prefix" "$manifest_dir"
 # Copy without preserving ownership, so that a system install is owned by root.
 maybe_root cp -dR --preserve=mode,timestamps "$stage$prefix/." "$prefix/"
 maybe_root cp "$work/installed-files" "$manifest_dir/installed-files"
+if [ -f "$old_manifest" ]; then
+	maybe_root rm -f "$old_manifest"
+	maybe_root rmdir "$prefix/share/nano-mouse" 2>/dev/null || true
+fi
 
 # --- 4. Switch the mouse on (for a personal install), and say how to start. ---
 if ! $system && ! grep -qs '^[[:space:]]*\(set\|unset\)[[:space:]]\+mouse' "$HOME/.nanorc"; then
-	echo "set mouse  # added by nano-mouse" >> "$HOME/.nanorc"
+	echo "set mouse  # added by nano-clip" >> "$HOME/.nanorc"
 	mouse_note="The mouse is switched on in ~/.nanorc."
 else
 	mouse_note="To use the mouse, have 'set mouse' in your nanorc (or press Alt+M in nano)."
@@ -252,7 +271,7 @@ fi
 
 hash -r 2>/dev/null || true
 echo
-printf '%sDone!%s nano-mouse is installed in %s\n' "$green" "$plain" "$prefix/bin/nano"
+printf '%sDone!%s nano-clip is installed in %s\n' "$green" "$plain" "$prefix/bin/nano"
 echo "$mouse_note"
 
 case ":$PATH:" in
