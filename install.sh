@@ -137,7 +137,13 @@ install_binary() {
 	mkdir -p "$stage$prefix/bin"
 	cp "$work"/nano-mouse-*/nano "$stage$prefix/bin/nano"
 	ln -s nano "$stage$prefix/bin/rnano"
-	"$stage$prefix/bin/nano" --version > /dev/null || die "The downloaded nano does not run here."
+	# A minimal system may lack the ncurses library that nano needs.
+	if ! "$stage$prefix/bin/nano" --version > /dev/null 2>&1; then
+		say "Installing the ncurses library that nano needs (libncursesw6)"
+		as_root apt-get update -qq
+		as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libncursesw6 > /dev/null
+		"$stage$prefix/bin/nano" --version > /dev/null || die "The downloaded nano does not run here."
+	fi
 }
 
 # --- 2b. The thorough way: build from the official source, and test it. ---

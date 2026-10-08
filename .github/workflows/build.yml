@@ -200,9 +200,11 @@ jobs:
             --title "nano-mouse ${GITHUB_REF_NAME#v}" \
             --notes-file packaging/RELEASE-NOTES.md
 
-  # Finally, run the real one-line command on each system, as a user would.
+  # Finally, run the real one-line command on each system, as a user would:
+  # after a release, and also on every push (against the latest release).
   one-liner:
-    needs: release
+    needs: [source, release]
+    if: ${{ !cancelled() && needs.source.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.release.result) }}
     name: one-line install on ${{ matrix.container }}
     runs-on: ubuntu-24.04
     container: ${{ matrix.container }}
@@ -212,11 +214,14 @@ jobs:
         container: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'ubuntu:26.04']
     steps:
       - run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates > /dev/null
-      - name: curl ... | bash
+      # The script is piped into bash exactly as with "curl ... | bash", but from
+      # this commit, as raw.githubusercontent.com may serve a cached older copy.
+      - uses: actions/checkout@v4
+      - name: '... | bash'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          bash < install.sh
           "$HOME/.local/bin/nano" --version | head -n 1
       - name: Uninstall the same way
         run: |
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/uninstall.sh | bash
+          bash < uninstall.sh
           test ! -e "$HOME/.local/bin/nano"
