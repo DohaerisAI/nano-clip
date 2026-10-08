@@ -67,8 +67,9 @@ case "${ID:-}:${VERSION_ID:-}" in
 		say "Unsupported system ${PRETTY_NAME:-unknown}; continuing because of --force" ;;
 esac
 
-if command -v dpkg-query >/dev/null && dpkg-query -W -f='${Version}' nano >/dev/null 2>&1; then
-	installed="$(dpkg-query -W -f='${Version}' nano)"
+# A removed or never-installed package has an empty version: nothing to check.
+installed="$(dpkg-query -W -f='${Version}' nano 2>/dev/null || true)"
+if [ -n "$installed" ]; then
 	case "$installed" in
 		"${NANO_VERSION}"-*) ;;
 		*) $force || die "The system nano is version ${installed}, not ${NANO_VERSION}.  Use --force to build anyway." ;;
