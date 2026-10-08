@@ -1,10 +1,17 @@
-Ready-made GNU nano 7.2 with the nano-mouse patch, for **Ubuntu 24.04** and **Debian 12**.
+GNU nano with mouse selection and system clipboard, ready-made for **Ubuntu 22.04, 24.04 and 26.04** and **Debian 12**, on x86_64 and arm64.
 
-- `nano-mouse-…-linux-x86_64.tar.gz`: Intel/AMD 64-bit, including WSL2
-- `nano-mouse-…-linux-arm64.tar.gz`: ARM 64-bit
+**Easiest:** you don't need to download anything here by hand. Just run:
 
-Install: unpack it, then `cp nano ~/.local/bin/` (just you) or `sudo cp nano /usr/local/bin/` (everyone). Then enable the mouse with `echo 'set mouse' >> ~/.nanorc`. The included README.txt has the details.
+```sh
+curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash
+```
 
-To build from source instead, see the [README](https://github.com/DohaerisAI/nano-mouse#install).
+It picks the right file below for your system, checks it, installs it into `~/.local/bin` and switches the mouse on.
 
-The binaries were built on Debian 12 and passed the full automated test suite on clean Ubuntu 24.04 machines before this release was published.
+| File | For |
+|---|---|
+| `nano-mouse-nano6.2-linux-*.tar.gz` | Ubuntu 22.04 |
+| `nano-mouse-nano7.2-linux-*.tar.gz` | Ubuntu 24.04, Debian 12 |
+| `nano-mouse-nano8.7.1-linux-*.tar.gz` | Ubuntu 26.04 |
+
+Each binary was built on the system it's for, and passed the full automated test suite on a clean machine of that system before this release was published.

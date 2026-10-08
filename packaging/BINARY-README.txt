@@ -1,23 +1,24 @@
-nano-mouse: GNU nano 7.2 with editor-style mouse selection and system clipboard
+nano-mouse: GNU nano with mouse selection and system clipboard
 https://github.com/DohaerisAI/nano-mouse
 
-For Ubuntu 24.04 and Debian 12 (both ship nano 7.2).
+The easiest way to install is the one-line installer, which picks the right
+download for your system automatically:
 
-Install for yourself (no root needed):
+    curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash
 
-    mkdir -p ~/.local/bin && cp nano ~/.local/bin/
-    hash -r && which nano     # should print ~/.local/bin/nano
+To install this download by hand instead, check that it matches your system:
 
-Or for every user on the machine:
+    nano-mouse-nano6.2-...    Ubuntu 22.04
+    nano-mouse-nano7.2-...    Ubuntu 24.04 and Debian 12
+    nano-mouse-nano8.7.1-...  Ubuntu 26.04
 
-    sudo cp nano /usr/local/bin/
+then copy the program into place:
 
-Both come before /usr/bin in PATH, so they take precedence over the system
-nano without touching it.  apt upgrades never overwrite them.  To go back to
-the stock nano, delete the copied file.
+    mkdir -p ~/.local/bin && cp nano ~/.local/bin/      (just for you)
+    sudo cp nano /usr/local/bin/                        (for everyone)
 
-Turn the mouse on once:   echo 'set mouse' >> ~/.nanorc
+and switch the mouse on:   echo 'set mouse' >> ~/.nanorc
 
-Inside nano, press Ctrl+G and scroll to the end for the list of mouse actions.
+To go back to the system's own nano, delete the copied file.
 
 License: GPL-3.0-or-later (see LICENSE).  Source: the repository above.

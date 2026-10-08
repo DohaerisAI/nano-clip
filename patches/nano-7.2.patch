@@ -1,14 +1,12 @@
-nano-mouse: editor-style mouse selection and system clipboard for GNU nano 7.2
+nano-mouse for GNU nano 7.2 (Ubuntu 24.04 LTS and Debian 12)
 
-  - click and drag to select, with autoscroll at the top and bottom edges
-  - double-click selects a word, triple-click a line (drag to extend)
-  - Alt+click / Shift+click extends the selection
-  - typing, pasting, Backspace or Delete replace a selection
-  - every copy and cut also goes to the system clipboard (OSC 52)
-  - a one-time hint and a "Mouse actions" section in the ^G help
+Editor-style mouse selection and system clipboard: drag to select (with
+autoscroll), double-click a word, triple-click a line, Alt/Shift+click to
+extend, typing replaces a selection, and every copy and cut also goes to
+the system clipboard (OSC 52).
 
-Applies to the pristine nano-7.2 source (sha256 86f34427...4526):
-  cd nano-7.2 && patch -p1 < nano-mouse.patch
+Applies to the official nano-7.2.tar.xz (sha256 86f3442768bd...):
+  cd nano-7.2 && patch -p1 < nano-7.2.patch
 
 https://github.com/DohaerisAI/nano-mouse
 License: GPL-3.0-or-later, the same as GNU nano.
@@ -719,7 +717,7 @@ index d2b2e1a..434ad2b 100644
  #endif
  void blank_edit(void);
 diff --git a/src/winio.c b/src/winio.c
-index c1cbe7b..235768d 100644
+index c1cbe7b..1f7bd39 100644
 --- a/src/winio.c
 +++ b/src/winio.c
 @@ -201,6 +201,15 @@ void read_keys_from(WINDOW *frame)
@@ -751,28 +749,61 @@ index c1cbe7b..235768d 100644
  #endif
  		input = wgetch(frame);
  
-@@ -1559,6 +1574,42 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+@@ -1559,6 +1574,75 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
  }
  
  #ifdef ENABLE_MOUSE
-+/* Mouse events that ncurses delivered together, the newest one first. */
++/* Mouse events that ncurses delivered together, the oldest one first. */
 +static MEVENT mouse_events[8];
-+static int mouse_events_waiting = 0;
++static int mouse_events_fetched = 0, mouse_events_waiting = 0;
++
++/* Return TRUE when getmouse() returns a run of events oldest first, as
++ * ncurses does since its 20250913 patch.  Earlier, the newest came first. */
++static bool oldest_comes_first(void)
++{
++	static int answer = -1;
++
++	if (answer < 0) {
++		long patch = 0;
++
++#ifdef NCURSES_VERSION
++		answer = (sscanf(curses_version(), "ncurses %*d.%*d.%ld", &patch) != 1 ||
++						patch >= 20250913);
++#else
++		answer = TRUE;
++#endif
++	}
++
++	return answer;
++}
 +
 +/* Get the oldest mouse event that has not yet been handled.  When mouse
 + * events arrive in quick succession, ncurses reports them with a single
-+ * KEY_MOUSE, and getmouse() then returns them one by one, newest first. */
++ * KEY_MOUSE, and getmouse() then returns them one by one. */
 +bool fetch_mouse_event(MEVENT *event)
 +{
-+	if (mouse_events_waiting == 0)
-+		while (mouse_events_waiting < 8 &&
-+						getmouse(&mouse_events[mouse_events_waiting]) == OK)
-+			mouse_events_waiting++;
++	if (mouse_events_waiting == 0) {
++		mouse_events_fetched = 0;
++
++		while (mouse_events_fetched < 8 &&
++						getmouse(&mouse_events[mouse_events_fetched]) == OK)
++			mouse_events_fetched++;
++
++		if (!oldest_comes_first())
++			for (int one = 0, other = mouse_events_fetched - 1; one < other; one++, other--) {
++				MEVENT swap = mouse_events[one];
++
++				mouse_events[one] = mouse_events[other];
++				mouse_events[other] = swap;
++			}
++
++		mouse_events_waiting = mouse_events_fetched;
++	}
 +
 +	if (mouse_events_waiting == 0)
 +		return FALSE;
 +
-+	*event = mouse_events[--mouse_events_waiting];
++	*event = mouse_events[mouse_events_fetched - mouse_events_waiting--];
 +	return TRUE;
 +}
 +
@@ -794,7 +825,7 @@ index c1cbe7b..235768d 100644
  /* Handle any mouse event that may have occurred.  We currently handle
   * releases/clicks of the first mouse button.  If allow_shortcuts is
   * TRUE, releasing/clicking on a visible shortcut will put back the
-@@ -1569,16 +1620,23 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+@@ -1569,16 +1653,23 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
   * putting back keystrokes to move down.  We also store the coordinates
   * of a mouse event that needs further handling in mouse_x and mouse_y.
   * Return -1 on error, 0 if the mouse event needs to be handled, 1 if it's
@@ -820,7 +851,7 @@ index c1cbe7b..235768d 100644
  	in_middle = wenclose(midwin, event.y, event.x);
  	in_footer = wenclose(footwin, event.y, event.x);
  
-@@ -1655,6 +1713,11 @@ int get_mouseinput(int *mouse_y, int *mouse_x, bool allow_shortcuts)
+@@ -1655,6 +1746,11 @@ int get_mouseinput(int *mouse_y, int *mouse_x, bool allow_shortcuts)
  			/* Clicks outside of the bottom window are handled elsewhere. */
  			return 0;
  	}

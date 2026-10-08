@@ -92,7 +92,16 @@ class Nano:
         return any(k in self.out for k in (b"realloc", b"corrupted", b"Segmentation", b"Aborted", b"Received SIG"))
 
 LINES = "".join(f"line number {i}\n" for i in range(1, 201))
+def nano_version(exe=None):
+    import subprocess
+    out = subprocess.run([exe or NANO, "--version"], capture_output=True, text=True).stdout
+    m = re.search(r"version (\d+)\.(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
 results = []
+def skip(name, reason):
+    print("SKIP " + name + "  -- " + reason)
+
 def check(name, cond, detail=""):
     results.append((name, bool(cond)))
     print(("PASS " if cond else "FAIL ") + name + ("" if cond else f"  -- {detail}"))
@@ -103,7 +112,7 @@ def no_selection(line, content=None):
     return [content if content is not None else LINES] if UP else [line]
 
 ONLY_72 = {"t_big_selection_cap", "t_clipboard_whole_lines", "t_selection_hint",
-           "t_help_mouse_section", "t_view_mode", "t_wheel"}
+           "t_help_mouse_section", "t_view_mode", "t_wheel"}   # (not for the upstream flavor)
 
 # Screen layout with --ignorercfiles: y=0 titlebar, y=1.. text (file line k at y=k), y=21 status, y=22-23 shortcuts.
 def t_drag_copy():
@@ -205,6 +214,8 @@ def t_click_clears_drag_selection():
     n.quit()
 
 def t_wheel():
+    if nano_version() >= (8, 0):
+        return   # covered by t_wheel_same_as_stock
     n = Nano(LINES)
     n.send(wheel_down(5, 5), wait=0.3); n.send(b"X")
     after = n.save_and_quit()
@@ -590,7 +601,8 @@ def t_without_zap_typing_is_unchanged():
 
 def same_as_stock(label, args, steps):
     """Run the same keystrokes in the stock and the patched nano, then compare the saved files."""
-    if not (UP and STOCK_NANO): return
+    if not STOCK_NANO:
+        skip(label, "set STOCK_NANO to an unpatched nano of the same version"); return
     results = []
     for exe in (STOCK_NANO, NANO):
         n = Nano(LINES, args=args, binary=exe)
@@ -599,6 +611,7 @@ def same_as_stock(label, args, steps):
     check(label, results[0] == results[1], [r.split("\n").index(next(l for l in r.split("\n") if "X" in l)) for r in results])
 
 def t_wheel_same_as_stock():
+    if nano_version() < (8, 0) and not STOCK_NANO: return   # t_wheel covers it
     same_as_stock("mouse wheel behaves exactly as in stock nano", (),
                   [wheel_down(5, 5), wheel_down(5, 5), wheel_up(5, 5)])
 

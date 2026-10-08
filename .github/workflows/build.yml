@@ -10,47 +10,47 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  # Install, test and uninstall on clean machines, the way users do it.
-  install:
-    name: install on ${{ matrix.name }}
+  # Build from source, test, install and uninstall on clean machines of every
+  # supported system, the way users do it.  The tests also compare the mouse
+  # wheel with the system's own (unpatched) nano of the same version.
+  source:
+    name: from source on ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: Ubuntu 24.04 x86_64, runner: ubuntu-24.04, container: '' }
-          - { name: Ubuntu 24.04 arm64, runner: ubuntu-24.04-arm, container: '' }
-          - { name: Debian 12 x86_64, runner: ubuntu-24.04, container: 'debian:12' }
-    defaults:
-      run:
-        shell: bash
+          - { name: Ubuntu 22.04 (nano 6.2), runner: ubuntu-24.04, container: 'ubuntu:22.04' }
+          - { name: Ubuntu 24.04 (nano 7.2), runner: ubuntu-24.04, container: 'ubuntu:24.04' }
+          - { name: Ubuntu 24.04 arm64 (nano 7.2), runner: ubuntu-24.04-arm, container: 'ubuntu:24.04' }
+          - { name: Debian 12 (nano 7.2), runner: ubuntu-24.04, container: 'debian:12' }
+          - { name: Ubuntu 26.04 (nano 8.7.1), runner: ubuntu-24.04, container: 'ubuntu:26.04' }
     steps:
-      - name: Prepare the Debian container
-        if: matrix.container != ''
-        run: apt-get update -qq && apt-get install -y -qq git python3
+      - name: Prepare the container (with the system's own nano, for comparison)
+        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git python3 curl nano > /dev/null
 
       - uses: actions/checkout@v4
 
-      - name: Install for the current user (builds and runs the tests)
-        run: ./install.sh
+      - name: Build, test and install for the current user
+        run: ./install.sh --from-source
 
-      - name: Check the per-user install
+      - name: Check, then uninstall
         run: |
           "$HOME/.local/bin/nano" --version | head -n 1
-          "$HOME/.local/bin/nano" --version | grep -q 'version 7.2'
-
-      - name: Uninstall the per-user install
-        run: |
+          grep -q 'added by nano-mouse' "$HOME/.nanorc"
           ./uninstall.sh
           test ! -e "$HOME/.local/bin/nano"
+          ! grep -qs 'added by nano-mouse' "$HOME/.nanorc"
 
-      - name: Install system-wide
-        run: ./install.sh --system --skip-tests
-
-      - name: Check and uninstall the system-wide install
+      - name: Install system-wide, check, and uninstall
         run: |
+          ./install.sh --system --from-source --skip-tests
           /usr/local/bin/nano --version | head -n 1
           ./uninstall.sh --system
           test ! -e /usr/local/bin/nano
@@ -69,9 +69,6 @@ jobs:
           - { name: Ubuntu 24.04, container: '' }
           - { name: Fedora Rawhide, container: 'fedora:rawhide' }
           - { name: Debian unstable, container: 'debian:sid' }
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Install the build tools
         run: |
@@ -114,33 +111,35 @@ jobs:
             python3 tests/nanotest.py | tee tests.log
           ! grep -q '^FAIL' tests.log
 
-  # On a version tag, build ready-made binaries.  They are built on Debian 12
-  # (the older glibc), so they run on both Debian 12 and Ubuntu 24.04.
+  # On a version tag: build the ready-made binaries, each on the system it is
+  # meant for (so it links against that system's libraries).
   binary:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: install
-    name: binary for ${{ matrix.arch }}
+    needs: source
+    name: binary nano ${{ matrix.nano }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    container: debian:12
+    container: ${{ matrix.container }}
     strategy:
       matrix:
+        nano: ['6.2', '7.2', '8.7.1']
+        arch: [x86_64, arm64]
         include:
+          - { nano: '6.2', container: 'ubuntu:22.04' }
+          - { nano: '7.2', container: 'debian:12' }   # older glibc: also runs on Ubuntu 24.04
+          - { nano: '8.7.1', container: 'ubuntu:26.04' }
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: arm64, runner: ubuntu-24.04-arm }
-    defaults:
-      run:
-        shell: bash
     steps:
-      - run: apt-get update -qq && apt-get install -y -qq git python3
+      - run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git python3 curl > /dev/null
       - uses: actions/checkout@v4
 
       - name: Build, test and install into /usr inside the container
-        # With --prefix /usr the binary uses the system's nano translations.
-        run: ./install.sh --prefix /usr
+        # With --prefix /usr, the binary uses the system's nano translations.
+        run: ./install.sh --from-source --prefix /usr
 
       - name: Package
         run: |
-          name="nano-mouse-${GITHUB_REF_NAME#v}-linux-${{ matrix.arch }}"
+          name="nano-mouse-nano${{ matrix.nano }}-linux-${{ matrix.arch }}"
           mkdir "$name"
           cp /usr/bin/nano LICENSE "$name/"
           cp packaging/BINARY-README.txt "$name/README.txt"
@@ -149,29 +148,37 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.arch }}
+          name: binary-${{ matrix.nano }}-${{ matrix.arch }}
           path: nano-mouse-*.tar.gz*
 
-  # Check the ready-made binaries on clean Ubuntu 24.04 machines.
+  # Install each ready-made binary with install.sh on a clean machine of its
+  # system, then run all the tests against it.
   verify:
     needs: binary
-    name: verify binary on Ubuntu 24.04 ${{ matrix.arch }}
+    name: verify binary on ${{ matrix.container }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     strategy:
+      fail-fast: false
       matrix:
+        container: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'ubuntu:26.04']
+        arch: [x86_64, arm64]
         include:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: arm64, runner: ubuntu-24.04-arm }
     steps:
+      - run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git python3 curl nano > /dev/null
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: binary-${{ matrix.arch }}
-      - name: Run the tests against the downloaded binary
+          pattern: binary-*
+          merge-multiple: true
+          path: release
+      - name: Install the binary like the one-line installer does
+        run: NANO_MOUSE_RELEASES="file://$PWD/release" ./install.sh
+      - name: Run the tests against it
         run: |
-          sha256sum -c nano-mouse-*.tar.gz.sha256
-          tar -xzf nano-mouse-*.tar.gz
-          NANO="$(echo "$PWD"/nano-mouse-*/nano)" python3 tests/nanotest.py | tee tests.log
+          NANO="$HOME/.local/bin/nano" STOCK_NANO=/usr/bin/nano python3 tests/nanotest.py | tee tests.log
           ! grep -q '^FAIL' tests.log
 
   release:
@@ -190,5 +197,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" nano-mouse-*.tar.gz nano-mouse-*.tar.gz.sha256 \
-            --title "nano-mouse ${GITHUB_REF_NAME#v} (for GNU nano 7.2)" \
+            --title "nano-mouse ${GITHUB_REF_NAME#v}" \
             --notes-file packaging/RELEASE-NOTES.md
+
+  # Finally, run the real one-line command on each system, as a user would.
+  one-liner:
+    needs: release
+    name: one-line install on ${{ matrix.container }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        container: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'ubuntu:26.04']
+    steps:
+      - run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates > /dev/null
+      - name: curl ... | bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          "$HOME/.local/bin/nano" --version | head -n 1
+      - name: Uninstall the same way
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/uninstall.sh | bash
+          test ! -e "$HOME/.local/bin/nano"

@@ -2,132 +2,122 @@
 
 [![build](https://github.com/DohaerisAI/nano-mouse/actions/workflows/build.yml/badge.svg)](https://github.com/DohaerisAI/nano-mouse/actions/workflows/build.yml)
 
-Editor-style mouse selection and a working system clipboard for **GNU nano 7.2**, the nano version in **Ubuntu 24.04 LTS** and **Debian 12**.
+**Use your mouse in nano like in any other editor:** drag to select, double-click a word, and copy straight to your system clipboard.
 
-Stock nano 7.2 can place the cursor with the mouse, but it can't select text with it, and its copy (Alt+6) never reaches your system clipboard. This patch adds both. Nothing else changes.
+## Install: one command
 
-> **Works on:** Ubuntu 24.04 LTS and Debian 12.
-> **Not yet:** Ubuntu 22.04 (nano 6.2) and Ubuntu 26.04 LTS (nano 8.7.1). Versions for these are coming. On them, `install.sh` stops with a message and changes nothing.
+Open a terminal and paste this:
 
 ```sh
-git clone https://github.com/DohaerisAI/nano-mouse.git
-cd nano-mouse && ./install.sh
-echo 'set mouse' >> ~/.nanorc
+curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash
 ```
 
-## What you get
+That's it. Open a **new** terminal window and use `nano` as usual.
 
-| Action | What it does |
+It takes a few seconds. It doesn't need your password, and it doesn't touch the nano that came with your system. You can remove it again at any time (see [Undo](#undo)).
+
+## Works on
+
+| Your system | Supported |
 |---|---|
-| **Drag** | Selects text. Hold the pointer above or below the text and it keeps scrolling while the selection grows. |
-| **Double-click** | Selects a word (letters, digits, `_`), a run of spaces or a run of punctuation. Keep the button down and drag to extend word by word. |
-| **Triple-click** | Selects the whole line. Drag to extend line by line. |
-| **Alt+click** (or Shift+click) | Extends the selection to the clicked spot, or starts one at the cursor. |
-| **Type, paste, Backspace, Delete** | Replace or remove the selection, like any editor. Alt+U undoes it. |
-| **Alt+6 / Ctrl+K / Alt+T** | Copy or cut as usual, and the text also goes to the **system clipboard**, so you can paste it into other apps. |
+| Ubuntu 22.04 LTS | ✅ |
+| Ubuntu 24.04 LTS | ✅ |
+| Ubuntu 26.04 LTS | ✅ |
+| Debian 12 | ✅ |
+| Windows with WSL (Ubuntu) | ✅ |
+| Anything else | ❌ not yet (the installer says so and changes nothing) |
 
-The first time you select something with the mouse, the status bar shows `M-6 copies to clipboard, ^K cuts, typing replaces, Alt+click extends`. The Ctrl+G help screen ends with a list of all the mouse actions:
+Both normal PCs (x86_64) and ARM machines (arm64) work. Not sure which Ubuntu you have? Run `lsb_release -d`.
 
-```
- Mouse actions (with 'set mouse' or M-M):
+## What you can do
 
-Drag             select text; hold the pointer above or below the text to scroll
-Double-click     select a word; keep the button down and drag to extend by words
-Triple-click     select a whole line; drag to extend by lines
-Alt+click        extend the selection to the clicked spot (also Shift+click)
-Typing           replace the selection (also pasting, Backspace, Delete)
-M-6, ^K          copy or cut; the text also goes to the system clipboard
-```
+| Do this | What happens |
+|---|---|
+| **Drag** with the mouse | Selects text. Drag past the top or bottom and it keeps scrolling. |
+| **Double-click** | Selects a word. |
+| **Triple-click** | Selects the whole line. |
+| **Alt+click** | Extends the selection to where you click. |
+| **Type** while text is selected | Replaces it, like any editor. Backspace and Delete remove it. Alt+U undoes. |
+| **Alt+6** (copy) or **Ctrl+K** (cut) | Also puts the text on your **system clipboard**, ready to paste into any other app. |
 
-## Requirements
+The first time you select something, nano shows a short hint at the bottom. Press **Ctrl+G** in nano and scroll to the end for the full list.
 
-- **nano version:** GNU nano **7.2** only. The patch does not apply to other versions.
-- **OS:** **Ubuntu 24.04 LTS** or **Debian 12**, on x86_64 or arm64. WSL2 counts, since it runs Ubuntu.
-- **Terminal:** any terminal with xterm mouse reporting, which nearly all of them have. For the clipboard, the terminal must also support **OSC 52**, as Windows Terminal, kitty, WezTerm, Alacritty, foot and iTerm2 (with clipboard access turned on in its settings) do. Other terminals ignore the clipboard part, and everything else still works.
+## Undo
 
-It was developed and tested on **Ubuntu 24.04 in WSL2 with Windows Terminal**. Every push is also built and tested automatically on clean Ubuntu 24.04 (x86_64 and arm64) and Debian 12 machines.
-
-## Install
-
-### From source (recommended)
+To remove nano-mouse and get your normal nano back:
 
 ```sh
-git clone https://github.com/DohaerisAI/nano-mouse.git
-cd nano-mouse
-./install.sh            # just for you: installs into ~/.local/bin
-./install.sh --system   # or for every user: installs into /usr/local/bin (uses sudo)
+curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/uninstall.sh | bash
 ```
 
-The script:
-1. checks that you are on Ubuntu 24.04 or Debian 12 with nano 7.2;
-2. installs the build tools (`build-essential`, `libncurses-dev`) with apt if they are missing;
-3. downloads the official nano 7.2 source and checks its SHA-256;
-4. applies the patch and builds;
-5. runs the 81 automated tests (about two minutes; skip them with `--skip-tests`);
-6. installs, keeping a list of the installed files so that `uninstall.sh` can remove exactly those.
+## Questions
 
-### Ready-made binary
+**It still behaves like the old nano.** Open a *new* terminal window first. If it still does, run `which nano`. If that shows `/usr/bin/nano`, add `export PATH="$HOME/.local/bin:$PATH"` to the end of `~/.bashrc` and open a new terminal.
 
-If you don't want to compile, download a `.tar.gz` for your CPU from [Releases](https://github.com/DohaerisAI/nano-mouse/releases). Then:
+**Copy works in nano, but I can't paste in other apps.** Your terminal needs to support "OSC 52", the way programs put text on the clipboard. Windows Terminal, kitty, WezTerm, Alacritty and foot do. iTerm2 does once you allow clipboard access in its settings. In other terminals, everything except the clipboard still works.
 
-```sh
-tar -xzf nano-mouse-*-linux-x86_64.tar.gz
-mkdir -p ~/.local/bin && cp nano-mouse-*/nano ~/.local/bin/    # or: sudo cp … /usr/local/bin/
-```
+**Shift+click doesn't work (Windows Terminal).** Windows Terminal keeps Shift+click for its own selection. Use **Alt+click** instead.
 
-### Turn on the mouse
+**Will a system update break it?** No. `apt upgrade` updates the system's nano in `/usr/bin` and never touches this one. Your settings (`~/.nanorc`) and colours stay the same.
 
-Run `echo 'set mouse' >> ~/.nanorc` once, or press **Alt+M** inside nano.
+**Can I install it for every user on the machine?** Yes: `curl -fsSL https://raw.githubusercontent.com/DohaerisAI/nano-mouse/main/install.sh | bash -s -- --system`. This asks for your password, and installs into `/usr/local/bin`.
 
-## How it replaces your nano (and how to go back)
+**I'd rather build it myself.** Clone the repository and run `./install.sh --from-source`. It downloads the official nano source, checks it, applies the patch, builds, and runs the automated tests before installing.
 
-Nothing of the distribution's nano is changed or removed. The patched nano goes in `~/.local/bin` (for you) or `/usr/local/bin` (for everyone). On Ubuntu and Debian, both come **before** `/usr/bin` in `PATH`, so typing `nano` runs the patched one. That has some useful side effects:
+## Changes from the normal nano
 
-- `apt upgrade` can't overwrite it or break it.
-- It reads the same `/etc/nanorc` and `~/.nanorc` as before, so your settings and syntax colours stay the same.
-- To go back, run `./uninstall.sh` (or `./uninstall.sh --system`), and `nano` is the stock one again.
+Everything works as before, except:
 
-If `which nano` still shows `/usr/bin/nano` after installing, `~/.local/bin` is not in your `PATH` yet. Open a new terminal, or add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc`.
+- Typing, pasting, Backspace or Delete while text is selected with the mouse or Shift+arrows replaces it. (Normal nano drops the selection and types at the cursor. The Ctrl+6 mark mode is unchanged.)
+- Two quick clicks on the same spot are a double-click. Clicking on the cursor still sets the mark if you click a bit slower.
+- Copies and cuts also go to the system clipboard. Anything over 100 KB stays in nano only.
 
-## Notes for Windows Terminal (WSL)
+---
 
-- **Use Alt+click to extend a selection.** Windows Terminal keeps Shift+click and Shift+drag for its own text selection, which still works as usual and bypasses nano.
-- The clipboard works out of the box. Alt+6 in nano, then Ctrl+V in any Windows app.
+## For the curious
 
-## Changes from stock nano 7.2
+### What's in this repository
 
-Keyboard behaviour is unchanged, except in these places:
+| | |
+|---|---|
+| [`install.sh`](install.sh), [`uninstall.sh`](uninstall.sh) | The installer and uninstaller |
+| [`patches/`](patches/) | The changes to nano's source, one file per nano version: [6.2](patches/nano-6.2.patch) (Ubuntu 22.04), [7.2](patches/nano-7.2.patch) (Ubuntu 24.04, Debian 12), [8.7.1](patches/nano-8.7.1.patch) (Ubuntu 26.04) |
+| [`tests/`](tests/) | Automated tests |
+| [`upstream/`](upstream/) | A version proposed to the official nano developers (see [Status](#status)) |
 
-- **Typing over a selection:** typing, pasting, Backspace and Delete now replace a selection made with the mouse or with Shift+arrows. Stock nano drops the selection and inserts at the cursor. The Ctrl+6 / Alt+A mark mode is unchanged.
-- **Clicking the cursor twice:** clicking on the cursor still sets or unsets the mark, but two clicks on the same spot within half a second now count as a double-click.
-- **Clipboard:** copies and cuts also go to the system clipboard. Selections over 100 KB are kept in nano only, and nano shows a warning on the status bar.
+### How the installer works
 
-## How it works
+1. It reads `/etc/os-release` to find your system, and so which nano version it needs.
+2. It downloads the ready-made nano for that system and your CPU from [Releases](https://github.com/DohaerisAI/nano-mouse/releases), and checks its SHA-256 checksum.
+3. It installs it into `~/.local/bin`, which comes before `/usr/bin` in `PATH`, so `nano` runs the new one. It keeps a list of what it installed, so the uninstaller removes exactly that.
+4. It adds `set mouse` to `~/.nanorc`, marked so the uninstaller can remove it again.
 
-The patch is [`nano-mouse.patch`](nano-mouse.patch), about 550 lines in six files of nano's source. In short:
+With `--from-source`, step 2 instead downloads the official nano source (checksum-verified), applies the patch, builds it, and runs the tests, comparing the mouse wheel and scrollbar with your system's own nano. `./install.sh --help` lists all options.
+
+### How the patch works
 
 - **Drag reporting:** nano asks the terminal for drag events (xterm mode 1002). ncurses doesn't do this itself, and it turns the mode off again after every resize or suspend, so nano re-requests it each time.
-- **Event handling:** mouse events are handled one by one and in order. With fast input, ncurses groups several events together and returns them newest first, which stock nano mishandles. Double- and triple-clicks are counted in nano, because ncurses' own click detection had to be turned off to get drag events.
-- **Clipboard:** the text is sent to the terminal's clipboard with the OSC 52 escape sequence (base64-encoded).
+- **Event handling:** when mouse events arrive in a burst, ncurses hands them over as a group, newest first before its 20250913 patch and oldest first since. nano checks the ncurses version and handles them in the right order. Double- and triple-clicks are counted by nano, because ncurses' own click detection has to be off to get drag events.
+- **Clipboard:** the text goes to the terminal's clipboard with the OSC 52 escape sequence.
 - **Replacing text:** typing over a selection uses nano's existing "zap" (delete without touching the cutbuffer), so it can be undone.
 
-To apply the patch by hand: `cd nano-7.2 && patch -p1 < nano-mouse.patch`.
+### Testing
 
-## Tests
+[`tests/nanotest.py`](tests/nanotest.py) runs nano in a pseudo-terminal and sends it real xterm mouse sequences. It checks the clipboard data and the saved files: selection, autoscroll, multi-clicks, Alt/Shift+click, typing over, undo, softwrap, line numbers, resizing, suspend, Unicode and bursts of fast input. It also checks that the mouse wheel and scrollbar behave exactly like the unpatched nano of the same version.
 
-[`tests/nanotest.py`](tests/nanotest.py) runs nano in a pseudo-terminal and sends it real xterm mouse sequences. It checks the clipboard data nano sends and the files it saves: selection, autoscroll, multi-clicks, Alt/Shift+click, typing over, undo, the clipboard, softwrap, line numbers, resizing, suspend, Unicode and bursts of fast input. It also checks that clicks, the mouse wheel, the shortcut bar and the prompts still behave as before.
+On every change, GitHub builds and tests it from source on clean Ubuntu 22.04, 24.04 (x86_64 and arm64), 26.04 and Debian 12 machines. Each release's ready-made binaries are tested again on their own system before they're published, and then the one-line installer itself is run on each system.
 
 ```sh
-python3 tests/nanotest.py                        # tests ~/.local/bin/nano
-NANO=/path/to/nano python3 tests/nanotest.py     # tests another binary
+python3 tests/nanotest.py                                          # tests ~/.local/bin/nano
+NANO=/path/to/nano STOCK_NANO=/usr/bin/nano python3 tests/nanotest.py
 ```
 
-## Status
+### Status
 
-This is an independent patch. It is **not part of GNU nano** and is not endorsed by the GNU project. It targets nano 7.2 only.
+This is an independent project. It is **not part of GNU nano** and not endorsed by the GNU project.
 
-A version reshaped for the current nano (git master, 9.x) is being proposed to the nano developers. See [`upstream/`](upstream/). In that version, typing over a selection is opt-in through `--zap`, and there's no built-in clipboard, because nano 8.7 and later can bind OSC 52 copying in the nanorc.
+A version reshaped for the current nano (9.x) has been proposed to the nano developers. See [`upstream/`](upstream/). In that version, typing over a selection is opt-in through `--zap`, and there's no built-in clipboard, because nano 8.7 and later can bind OSC 52 copying in the nanorc.
 
-## License
+### License
 
 GPL-3.0-or-later, the same as GNU nano. See [LICENSE](LICENSE).

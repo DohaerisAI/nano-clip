@@ -1,0 +1,856 @@
+nano-mouse for GNU nano 8.7.1 (Ubuntu 26.04 LTS)
+
+Editor-style mouse selection and system clipboard: drag to select (with
+autoscroll), double-click a word, triple-click a line, Alt/Shift+click to
+extend, typing replaces a selection, and every copy and cut also goes to
+the system clipboard (OSC 52).
+
+Applies to the official nano-8.7.1.tar.xz (sha256 76f0dcb248f2...):
+  cd nano-8.7.1 && patch -p1 < nano-8.7.1.patch
+
+https://github.com/DohaerisAI/nano-mouse
+License: GPL-3.0-or-later, the same as GNU nano.
+
+diff --git a/src/cut.c b/src/cut.c
+index 555c34d..984f76d 100644
+--- a/src/cut.c
++++ b/src/cut.c
+@@ -118,7 +118,7 @@ void expunge(undo_type action)
+ void do_delete(void)
+ {
+ #ifndef NANO_TINY
+-	if (openfile->mark && ISSET(LET_THEM_ZAP))
++	if (openfile->mark && (ISSET(LET_THEM_ZAP) || soft_selection_exists()))
+ 		zap_text();
+ 	else
+ #endif
+@@ -138,7 +138,7 @@ void do_delete(void)
+ void do_backspace(void)
+ {
+ #ifndef NANO_TINY
+-	if (openfile->mark && ISSET(LET_THEM_ZAP))
++	if (openfile->mark && (ISSET(LET_THEM_ZAP) || soft_selection_exists()))
+ 		zap_text();
+ 	else
+ #endif
+@@ -534,6 +534,66 @@ void do_snip(bool marked, bool until_eof, bool append)
+ #endif
+ }
+ 
++#ifndef NANO_TINY
++/* Put a copy of the cutbuffer onto the system clipboard, by way of the
++ * OSC 52 escape sequence, which the terminal passes to the clipboard. */
++void export_cutbuffer(void)
++{
++	static const char *base64 =
++				"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++	size_t length = 0, index = 0;
++	char *text, *coded, *spot;
++
++	if (cutbuffer == NULL)
++		return;
++
++	/* Join the lines of the cutbuffer, separated by newlines. */
++	for (linestruct *line = cutbuffer; line != NULL; line = line->next)
++		length += strlen(line->data) + 1;
++
++	/* Avoid choking the terminal with an overlong sequence. */
++	if (--length > 100000) {
++		statusline(AHEM, _("Too much text for the system clipboard"));
++		return;
++	}
++
++	text = nmalloc(length + 1);
++	spot = text;
++
++	for (linestruct *line = cutbuffer; line != NULL; line = line->next) {
++		spot = stpcpy(spot, line->data);
++		if (line->next)
++			*(spot++) = '\n';
++	}
++
++	coded = nmalloc((length + 2) / 3 * 4 + 1);
++	spot = coded;
++
++	/* Encode each group of three bytes as four base64 characters. */
++	while (index < length) {
++		unsigned long triplet = (unsigned char)text[index++] << 16;
++
++		if (index < length)
++			triplet |= (unsigned char)text[index] << 8;
++		if (index + 1 < length)
++			triplet |= (unsigned char)text[index + 1];
++
++		*(spot++) = base64[(triplet >> 18) & 0x3F];
++		*(spot++) = base64[(triplet >> 12) & 0x3F];
++		*(spot++) = (index < length) ? base64[(triplet >> 6) & 0x3F] : '=';
++		*(spot++) = (index + 1 < length) ? base64[triplet & 0x3F] : '=';
++		index += 2;
++	}
++	*spot = '\0';
++
++	printf("\x1B]52;c;%s\x07", coded);
++	fflush(stdout);
++
++	free(text);
++	free(coded);
++}
++#endif
++
+ /* Move text from the current buffer into the cutbuffer. */
+ void cut_text(void)
+ {
+@@ -551,6 +611,8 @@ void cut_text(void)
+ 	do_snip(openfile->mark != NULL, FALSE, FALSE);
+ 
+ 	update_undo(CUT);
++
++	export_cutbuffer();
+ #else
+ 	if (is_cuttable(FALSE))
+ 		do_snip(FALSE, FALSE, FALSE);
+@@ -576,6 +638,8 @@ void cut_till_eof(void)
+ 	do_snip(FALSE, TRUE, FALSE);
+ 	update_undo(CUT_TO_EOF);
+ 	wipe_statusbar();
++
++	export_cutbuffer();
+ }
+ 
+ /* Erase text (current line or marked region), sending it into oblivion. */
+@@ -603,6 +667,27 @@ void zap_text(void)
+ 	cutbuffer = was_cutbuffer;
+ }
+ 
++/* Return TRUE when a soft selection (made with Shift or the mouse)
++ * exists and is not empty. */
++bool soft_selection_exists(void)
++{
++	return (openfile->mark && openfile->softmark &&
++				(openfile->mark != openfile->current ||
++				openfile->mark_x != openfile->current_x));
++}
++
++/* Delete a soft selection without touching the cutbuffer, so that
++ * typed or pasted text replaces it.  An empty one is just dropped. */
++void zap_soft_selection(void)
++{
++	if (soft_selection_exists())
++		zap_text();
++	else if (openfile->mark && openfile->softmark) {
++		openfile->mark = NULL;
++		refresh_needed = TRUE;
++	}
++}
++
+ /* Make a copy of the marked region, putting it in the cutbuffer. */
+ void copy_marked_region(void)
+ {
+@@ -665,6 +750,7 @@ void copy_text(void)
+ #ifndef NANO_TINY
+ 	if (openfile->mark) {
+ 		copy_marked_region();
++		export_cutbuffer();
+ 		return;
+ 	}
+ #endif
+@@ -721,6 +807,8 @@ void copy_text(void)
+ 	openfile->last_action = COPY;
+ #endif
+ 	keep_cutbuffer = TRUE;
++
++	export_cutbuffer();
+ }
+ 
+ /* Copy text from the cutbuffer into the current buffer. */
+diff --git a/src/global.c b/src/global.c
+index f0889ec..eb2a784 100644
+--- a/src/global.c
++++ b/src/global.c
+@@ -142,6 +142,10 @@ int editwincols = -1;
+ 		/* The number of usable columns in the edit window: COLS - margin. */
+ int margin = 0;
+ 		/* The amount of space reserved at the left for line numbers. */
++#ifdef ENABLE_MOUSE
++bool want_drag_events = FALSE;
++		/* Whether the terminal still needs to be asked for drag events. */
++#endif
+ int sidebar = 0;
+ 		/* Becomes 1 when the indicator "scroll bar" must be shown. */
+ #ifndef NANO_TINY
+diff --git a/src/help.c b/src/help.c
+index be2f508..400e046 100644
+--- a/src/help.c
++++ b/src/help.c
+@@ -35,6 +35,18 @@ static char *end_of_intro = NULL;
+ 		/* The point in the help text where the shortcut descriptions begin. */
+ static size_t location;
+ 		/* The offset (in bytes) of the topleft of the shown help text. */
++#if defined(ENABLE_MOUSE) && !defined(NANO_TINY)
++static const char *mouse_help = N_("\n Mouse actions (with 'set mouse' or M-M):\n\n"
++		"Drag\t\t select text; hold the pointer above or below "
++				"the text to scroll\n"
++		"Double-click\t select a word; keep the button down and drag "
++				"to extend by words\n"
++		"Triple-click\t select a whole line; drag to extend by lines\n"
++		"Alt+click\t extend the selection to the clicked spot "
++				"(also Shift+click)\n"
++		"Typing\t\t replace the selection (also pasting, Backspace, Delete)\n"
++		"M-6, ^K\t\t copy or cut; the text also goes to the system clipboard\n");
++#endif
+ 
+ /* Allocate space for the help text for the current menu,
+  * and concatenate the different pieces of text into it. */
+@@ -246,6 +258,11 @@ void help_init(void)
+ 	}
+ #endif
+ 
++#if defined(ENABLE_MOUSE) && !defined(NANO_TINY)
++	if (currmenu == MMAIN)
++		allocsize += strlen(_(mouse_help));
++#endif
++
+ 	/* Allocate memory for the help text. */
+ 	help_text = nmalloc(allocsize + 1);
+ 
+@@ -317,6 +334,10 @@ void help_init(void)
+ 					break;
+ 				}
+ 		}
++#ifdef ENABLE_MOUSE
++		/* Finally describe what the mouse can do. */
++		ptr += sprintf(ptr, "%s", _(mouse_help));
++#endif
+ 	}
+ #endif
+ }
+diff --git a/src/nano.c b/src/nano.c
+index b2abff7..e3dd2c7 100644
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -36,6 +36,7 @@
+ #include <string.h>
+ #ifdef HAVE_TERMIOS_H
+ #include <termios.h>
++#include <time.h>
+ #endif
+ #include <unistd.h>
+ #ifdef __linux__
+@@ -451,12 +452,22 @@ void disable_mouse_support(void)
+ {
+ 	mousemask(0, NULL);
+ 	mouseinterval(oldinterval);
++
++	/* Stop the reporting of mouse movements while a button is held. */
++	printf("\x1B[?1002l");
++	fflush(stdout);
++	want_drag_events = FALSE;
+ }
+ 
+ void enable_mouse_support(void)
+ {
+-	mousemask(ALL_MOUSE_EVENTS, NULL);
+-	oldinterval = mouseinterval(50);
++	mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
++	/* Get raw presses and releases instead of clicks, to allow dragging. */
++	oldinterval = mouseinterval(0);
++
++	/* Ncurses asks only for button events (mode 1000), so the request
++	 * for drag events (mode 1002) is sent before the next read. */
++	want_drag_events = TRUE;
+ }
+ 
+ /* Switch mouse support on or off, as needed. */
+@@ -1246,6 +1257,11 @@ void terminal_init(void)
+ 	printf("\x1B[?2004h");
+ 	fflush(stdout);
+ #endif
++#ifdef ENABLE_MOUSE
++	/* When ncurses reenables the mouse, it switches off drag events. */
++	if (ISSET(USE_MOUSE))
++		want_drag_events = TRUE;
++#endif
+ }
+ 
+ /* Ask ncurses for a keycode, or assign a default one. */
+@@ -1336,12 +1352,344 @@ void unbound_key(int code)
+ }
+ 
+ #ifdef ENABLE_MOUSE
++/* Move the cursor to the given row and column of the edit window.  The row
++ * may lie just outside of the window, which makes the viewport scroll. */
++static void move_cursor_to_spot(int row, int col)
++{
++	ssize_t row_count = row - openfile->cursor_row;
++	size_t leftedge;
++
++#ifndef NANO_TINY
++	if (ISSET(SOFTWRAP))
++		leftedge = leftedge_for(xplustabs(), openfile->current);
++	else
++#endif
++		leftedge = get_page_start(xplustabs());
++
++	/* Move current up or down to the row that was clicked on. */
++	if (row_count < 0)
++		go_back_chunks(-row_count, &openfile->current, &leftedge);
++	else
++		go_forward_chunks(row_count, &openfile->current, &leftedge);
++
++	openfile->current_x = actual_x(openfile->current->data,
++							actual_last_column(leftedge, (col < 0) ? 0 : col));
++}
++
++#ifndef NANO_TINY
++/* Whether a drag was cut short, so that its button release gets ignored. */
++static bool drag_interrupted = FALSE;
++
++/* The units by which a mouse selection grows; also the number of clicks. */
++#define BY_CHARS  1
++#define BY_WORDS  2
++#define BY_LINES  3
++
++/* The spot and time of the latest press of the first mouse button. */
++static int pressed_row = -1, pressed_col = -1, press_count = 0;
++static struct timespec pressed_time;
++
++/* Return how many times in a row (1 to 3) the first mouse button has been
++ * pressed on the given spot, each press within half a second of the last. */
++static int count_presses(int row, int col)
++{
++	struct timespec now;
++	long elapsed;
++
++	clock_gettime(CLOCK_MONOTONIC, &now);
++	elapsed = (now.tv_sec - pressed_time.tv_sec) * 1000 +
++				(now.tv_nsec - pressed_time.tv_nsec) / 1000000;
++
++	if (row == pressed_row && col == pressed_col && elapsed < 500)
++		press_count = press_count % 3 + 1;
++	else
++		press_count = 1;
++
++	pressed_time = now;
++	pressed_row = row;
++	pressed_col = col;
++
++	return press_count;
++}
++
++/* Return 2 for a word character (including the underscore, as in names
++ * in code), 1 for a blank, and 0 for anything else. */
++static int kind_of_char(const char *spot)
++{
++	if (is_word_char(spot, FALSE) || *spot == '_')
++		return 2;
++	else
++		return (is_blank_char(spot) ? 1 : 0);
++}
++
++/* Determine the start and end of the unit (a single spot, a run of similar
++ * characters, or a whole line) that contains the given spot. */
++static void unit_around(int unit, linestruct *line, size_t x, linestruct **start,
++						size_t *start_x, linestruct **end, size_t *end_x)
++{
++	*start = line;
++	*end = line;
++	*start_x = x;
++	*end_x = x;
++
++	if (unit == BY_WORDS && (line->data[x] != '\0' || x > 0)) {
++		/* Beyond the end of the line, take the last run of characters. */
++		size_t spot = (line->data[x] == '\0') ? step_left(line->data, x) : x;
++		int kind = kind_of_char(line->data + spot);
++
++		*start_x = spot;
++		while (*start_x > 0 && kind_of_char(line->data +
++							step_left(line->data, *start_x)) == kind)
++			*start_x = step_left(line->data, *start_x);
++
++		*end_x = spot;
++		while (line->data[*end_x] != '\0' &&
++							kind_of_char(line->data + *end_x) == kind)
++			*end_x = step_right(line->data, *end_x);
++	} else if (unit == BY_LINES) {
++		*start_x = 0;
++		if (line->next) {
++			*end = line->next;
++			*end_x = 0;
++		} else
++			*end_x = strlen(line->data);
++	}
++}
++
++/* Make the selection run from the anchor (the region between top and bot)
++ * to the unit around the cursor, with the cursor at the far end. */
++static void stretch_selection(int unit, linestruct *top, size_t top_x,
++								linestruct *bot, size_t bot_x)
++{
++	linestruct *start, *end;
++	size_t start_x, end_x;
++
++	unit_around(unit, openfile->current, openfile->current_x,
++								&start, &start_x, &end, &end_x);
++
++	if (start->lineno < top->lineno || (start == top && start_x < top_x)) {
++		openfile->mark = bot;
++		openfile->mark_x = bot_x;
++		openfile->current = start;
++		openfile->current_x = start_x;
++	} else {
++		openfile->mark = top;
++		openfile->mark_x = top_x;
++		openfile->current = end;
++		openfile->current_x = end_x;
++	}
++}
++
++/* Follow the mouse while its first button is held down, selecting the text
++ * between the anchor (the region from top to bot) and the pointer, growing
++ * by the given unit.  When selecting is FALSE, the selection begins only
++ * when the pointer moves.  While the pointer rests above or below the text
++ * area, keep scrolling.  Return TRUE when the pointer moved. */
++static bool drag_to_select(int unit, linestruct *top, size_t top_x,
++						linestruct *bot, size_t bot_x, bool selecting)
++{
++	int toprow = getbegy(midwin);
++	int row = 0, col = 0, edge = 0;
++	bool moved = FALSE;
++	MEVENT event;
++
++	while (TRUE) {
++		linestruct *was_current = openfile->current;
++		linestruct *was_mark = openfile->mark;
++		size_t was_mark_x = openfile->mark_x;
++		int input;
++
++		if (refresh_needed)
++			edit_refresh();
++		else {
++			place_the_cursor();
++			wnoutrefresh(midwin);
++		}
++		doupdate();
++
++		/* Handle mouse events that came in together before reading more. */
++		if (mouse_event_waiting())
++			input = KEY_MOUSE;
++		else {
++			/* At an edge, wait only briefly, so that the scrolling
++			 * continues also when the pointer does not move. */
++			wtimeout(midwin, edge ? 50 : -1);
++			input = wgetch(midwin);
++			wtimeout(midwin, -1);
++		}
++
++		if (input == KEY_MOUSE) {
++			if (!fetch_mouse_event(&event))
++				continue;
++			if (event.bstate & (BUTTON1_RELEASED | BUTTON1_CLICKED))
++				break;
++			if (!(event.bstate & REPORT_MOUSE_POSITION))
++				continue;
++
++			row = event.y - toprow;
++			col = event.x - getbegx(midwin) - margin;
++
++			/* The pointer is at an edge when it is beyond the text area,
++			 * or on its first or last row when that is the screen edge. */
++			if (row < 0 || (row == 0 && toprow == 0))
++				edge = -1;
++			else if (row >= editwinrows || (row == editwinrows - 1 &&
++										toprow + editwinrows == LINES))
++				edge = 1;
++			else
++				edge = 0;
++		} else if (input != ERR) {
++			/* A keystroke ends the drag; let it be handled normally. */
++			put_back(input);
++			drag_interrupted = TRUE;
++			break;
++		} else if (the_window_resized) {
++			regenerate_screen();
++			drag_interrupted = TRUE;
++			break;
++		} else if (!edge)
++			continue;
++
++		/* Like a shifted selection, a dragged one goes away when the
++		 * cursor is moved without Shift. */
++		if (!moved && !selecting)
++			openfile->softmark = TRUE;
++		moved = TRUE;
++
++		/* At an edge, go one row beyond the visible ones, to scroll. */
++		move_cursor_to_spot((edge < 0) ? -1 : (edge > 0) ? editwinrows : row, col);
++		stretch_selection(unit, top, top_x, bot, bot_x);
++
++		if (openfile->mark != was_mark || openfile->mark_x != was_mark_x)
++			refresh_needed = TRUE;
++
++		edit_redraw(was_current, FLOWING);
++	}
++
++	return moved;
++}
++#endif
++
++#ifndef NANO_TINY
++/* The first time that text gets selected with the mouse, say what can be
++ * done with the selection. */
++static void hint_at_selection(void)
++{
++	static bool hinted = FALSE;
++
++	if (hinted || !openfile->mark || (openfile->mark == openfile->current &&
++								openfile->mark_x == openfile->current_x))
++		return;
++
++	statusline(REMARK, _("M-6 copies to clipboard, ^K cuts, typing replaces, "
++								"Alt+click extends"));
++	hinted = TRUE;
++}
++#endif
++
+ /* Handle a mouse click on the edit window or the shortcut list. */
+ int do_mouse(void)
+ {
+ 	int click_row, click_col;
+ 	int retval = get_mouseinput(&click_row, &click_col, TRUE);
+ 
++#ifndef NANO_TINY
++	/* A press of the first button in the edit window may begin a drag. */
++	if (retval == 3) {
++		linestruct *current_save = openfile->current;
++		size_t current_x_save = openfile->current_x;
++		bool had_selection = (openfile->mark && openfile->softmark);
++		linestruct *top, *bot;
++		size_t top_x, bot_x;
++		int presses;
++
++		drag_interrupted = FALSE;
++
++		if (!wmouse_trafo(midwin, &click_row, &click_col, FALSE))
++			return 2;
++
++		/* With Shift or Alt held, extend the selection to the clicked spot,
++		 * starting one at the cursor when there is none. */
++		if (mouse_with_modifier()) {
++			pressed_row = -1;
++
++			if (!openfile->mark) {
++				openfile->mark = openfile->current;
++				openfile->mark_x = openfile->current_x;
++				openfile->softmark = TRUE;
++			}
++
++			top = openfile->mark;
++			top_x = openfile->mark_x;
++
++			move_cursor_to_spot(click_row, click_col);
++			edit_redraw(current_save, CENTERING);
++			refresh_needed = TRUE;
++
++			drag_to_select(BY_CHARS, top, top_x, top, top_x, TRUE);
++			hint_at_selection();
++			keep_cutbuffer = FALSE;
++			return 2;
++		}
++
++		presses = count_presses(click_row, click_col);
++
++		/* Like a cursor movement, a click discards a shifted selection. */
++		if (had_selection) {
++			openfile->mark = NULL;
++			refresh_needed = TRUE;
++		}
++
++		move_cursor_to_spot(click_row, click_col);
++		edit_redraw(current_save, CENTERING);
++
++		/* A double click selects a word, a triple click a whole line. */
++		if (presses > 1) {
++			unit_around(presses, openfile->current, openfile->current_x,
++										&top, &top_x, &bot, &bot_x);
++			openfile->mark = top;
++			openfile->mark_x = top_x;
++			openfile->softmark = TRUE;
++			openfile->current = bot;
++			openfile->current_x = bot_x;
++			edit_redraw(current_save, FLOWING);
++			refresh_needed = TRUE;
++
++			if (drag_to_select(presses, top, top_x, bot, bot_x, TRUE))
++				pressed_row = -1;
++
++			hint_at_selection();
++			keep_cutbuffer = FALSE;
++			return 2;
++		}
++
++		if (drag_to_select(BY_CHARS, openfile->current, openfile->current_x,
++								openfile->current, openfile->current_x, FALSE)) {
++			pressed_row = -1;
++			hint_at_selection();
++		}
++		/* Clicking where the cursor is toggles the mark, as does clicking
++		 * beyond the line length with the cursor at the end of the line. */
++		else if (!had_selection && openfile->current == current_save &&
++									openfile->current_x == current_x_save) {
++			do_mark();
++			if (ISSET(STATEFLAGS))
++				titlebar(NULL);
++			return 2;
++		}
++
++		/* The cursor moved; clean the cutbuffer on the next cut. */
++		keep_cutbuffer = FALSE;
++		return 2;
++	}
++
++	/* When a drag was interrupted, ignore the release of the button. */
++	if (retval == 0 && drag_interrupted) {
++		drag_interrupted = FALSE;
++		return 2;
++	}
++#endif
++
+ 	/* If the click is wrong or already handled, we're done. */
+ 	if (retval != 0)
+ 		return retval;
+@@ -1349,25 +1697,12 @@ int do_mouse(void)
+ 	/* If the click was in the edit window, put the cursor in that spot. */
+ 	if (wmouse_trafo(midwin, &click_row, &click_col, FALSE)) {
+ 		linestruct *was_current = openfile->current;
+-		ssize_t row_count = click_row - openfile->cursor_row;
+-		size_t leftedge;
+ #ifndef NANO_TINY
++		ssize_t row_count = click_row - openfile->cursor_row;
+ 		size_t was_x = openfile->current_x;
+-
+-		if (ISSET(SOFTWRAP))
+-			leftedge = leftedge_for(xplustabs(), openfile->current);
+-		else
+ #endif
+-			leftedge = get_page_start(xplustabs());
+-
+-		/* Move current up or down to the row that was clicked on. */
+-		if (row_count < 0)
+-			go_back_chunks(-row_count, &openfile->current, &leftedge);
+-		else
+-			go_forward_chunks(row_count, &openfile->current, &leftedge);
+ 
+-		openfile->current_x = actual_x(openfile->current->data,
+-								actual_last_column(leftedge, click_col));
++		move_cursor_to_spot(click_row, click_col);
+ 
+ #ifndef NANO_TINY
+ 		/* Clicking there where the cursor is toggles the mark. */
+@@ -1461,8 +1796,11 @@ void suck_up_input_and_paste_it(void)
+ 
+ 	if (ISSET(VIEW_MODE))
+ 		print_view_warning();
+-	else
++	else {
++		/* Pasted text replaces a soft selection. */
++		zap_soft_selection();
+ 		paste_text();
++	}
+ 
+ 	if (input != END_OF_PASTE)
+ 		statusline(ALERT, _("Flawed paste"));
+@@ -1621,10 +1959,8 @@ void process_a_keystroke(void)
+ 			print_view_warning();
+ 		else {
+ #ifndef NANO_TINY
+-			if (openfile->mark && openfile->softmark) {
+-				openfile->mark = NULL;
+-				refresh_needed = TRUE;
+-			}
++			/* Typed text replaces a soft selection. */
++			zap_soft_selection();
+ #endif
+ 			/* When the input buffer (plus room for terminating NUL) is full,
+ 			 * extend it; otherwise, if it does not exist yet, create it. */
+diff --git a/src/prototypes.h b/src/prototypes.h
+index 72d46ad..5620e39 100644
+--- a/src/prototypes.h
++++ b/src/prototypes.h
+@@ -98,6 +98,9 @@ extern WINDOW *footwin;
+ extern int editwinrows;
+ extern int editwincols;
+ extern int margin;
++#ifdef ENABLE_MOUSE
++extern bool want_drag_events;
++#endif
+ extern int sidebar;
+ #ifndef NANO_TINY
+ extern int *bardata;
+@@ -272,7 +275,10 @@ void cut_text(void);
+ #ifndef NANO_TINY
+ void cut_till_eof(void);
+ void zap_text(void);
++bool soft_selection_exists(void);
++void zap_soft_selection(void);
+ void copy_marked_region(void);
++void export_cutbuffer(void);
+ #endif
+ void copy_text(void);
+ void paste_text(void);
+@@ -605,6 +611,9 @@ int get_input(WINDOW *win);
+ int get_kbinput(WINDOW *win, bool showcursor);
+ char *get_verbatim_kbinput(WINDOW *win, size_t *count);
+ #ifdef ENABLE_MOUSE
++bool fetch_mouse_event(MEVENT *event);
++bool mouse_event_waiting(void);
++bool mouse_with_modifier(void);
+ int get_mouseinput(int *mouse_y, int *mouse_x, bool allow_shortcuts);
+ #endif
+ void blank_edit(void);
+diff --git a/src/winio.c b/src/winio.c
+index be2fc30..3738fe8 100644
+--- a/src/winio.c
++++ b/src/winio.c
+@@ -191,6 +191,15 @@ void read_keys_from(WINDOW *frame)
+ 	/* Before reading the first keycode, display any pending screen updates. */
+ 	doupdate();
+ 
++#ifdef ENABLE_MOUSE
++	/* Ask for drag events after ncurses has sent its own mouse settings. */
++	if (want_drag_events) {
++		printf("\x1B[?1002h");
++		fflush(stdout);
++		want_drag_events = FALSE;
++	}
++#endif
++
+ 	if (reveal_cursor && (!spotlighted || ISSET(SHOW_CURSOR) || currmenu == MSPELL) &&
+ 						(LINES > 1 || lastmessage <= HUSH))
+ 		curs_set(1);
+@@ -288,6 +297,12 @@ void read_keys_from(WINDOW *frame)
+ #ifndef NANO_TINY
+ 		if (recording)
+ 			add_to_macrobuffer(input);
++#endif
++#ifdef ENABLE_MOUSE
++		/* Let a mouse event be handled before more input is read, so that
++		 * a drag gets the subsequent mouse events and keystrokes in order. */
++		if (input == KEY_MOUSE)
++			break;
+ #endif
+ 		input = wgetch(frame);
+ 
+@@ -1573,6 +1588,75 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+ }
+ 
+ #ifdef ENABLE_MOUSE
++/* Mouse events that ncurses delivered together, the oldest one first. */
++static MEVENT mouse_events[8];
++static int mouse_events_fetched = 0, mouse_events_waiting = 0;
++
++/* Return TRUE when getmouse() returns a run of events oldest first, as
++ * ncurses does since its 20250913 patch.  Earlier, the newest came first. */
++static bool oldest_comes_first(void)
++{
++	static int answer = -1;
++
++	if (answer < 0) {
++		long patch = 0;
++
++#ifdef NCURSES_VERSION
++		answer = (sscanf(curses_version(), "ncurses %*d.%*d.%ld", &patch) != 1 ||
++						patch >= 20250913);
++#else
++		answer = TRUE;
++#endif
++	}
++
++	return answer;
++}
++
++/* Get the oldest mouse event that has not yet been handled.  When mouse
++ * events arrive in quick succession, ncurses reports them with a single
++ * KEY_MOUSE, and getmouse() then returns them one by one. */
++bool fetch_mouse_event(MEVENT *event)
++{
++	if (mouse_events_waiting == 0) {
++		mouse_events_fetched = 0;
++
++		while (mouse_events_fetched < 8 &&
++						getmouse(&mouse_events[mouse_events_fetched]) == OK)
++			mouse_events_fetched++;
++
++		if (!oldest_comes_first())
++			for (int one = 0, other = mouse_events_fetched - 1; one < other; one++, other--) {
++				MEVENT swap = mouse_events[one];
++
++				mouse_events[one] = mouse_events[other];
++				mouse_events[other] = swap;
++			}
++
++		mouse_events_waiting = mouse_events_fetched;
++	}
++
++	if (mouse_events_waiting == 0)
++		return FALSE;
++
++	*event = mouse_events[mouse_events_fetched - mouse_events_waiting--];
++	return TRUE;
++}
++
++/* Return TRUE when mouse events are waiting to be fetched. */
++bool mouse_event_waiting(void)
++{
++	return (mouse_events_waiting > 0);
++}
++
++/* The button state of the latest mouse event that get_mouseinput() saw. */
++static mmask_t latest_bstate = 0;
++
++/* Return TRUE when Shift or Alt was held during the latest mouse event. */
++bool mouse_with_modifier(void)
++{
++	return ((latest_bstate & (BUTTON_SHIFT | BUTTON_ALT)) != 0);
++}
++
+ /* Handle any mouse event that may have occurred.  We currently handle
+  * releases/clicks of the first mouse button.  If allow_shortcuts is
+  * TRUE, releasing/clicking on a visible shortcut will put back the
+@@ -1583,16 +1667,23 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+  * putting back keystrokes to scroll down.  We also store the coordinates
+  * of a mouse event that needs further handling in mouse_x and mouse_y.
+  * Return -1 on error, 0 if the mouse event needs to be handled, 1 if it's
+- * been handled by putting back keystrokes, or 2 if it's been ignored. */
++ * been handled by putting back keystrokes, 2 if it's been ignored, or 3
++ * if the first button was pressed in the edit window (a possible drag). */
+ int get_mouseinput(int *mouse_y, int *mouse_x, bool allow_shortcuts)
+ {
+ 	bool in_middle, in_footer;
+ 	MEVENT event;
+ 
+ 	/* First, get the actual mouse event. */
+-	if (getmouse(&event) == ERR)
++	if (!fetch_mouse_event(&event))
+ 		return -1;
+ 
++	/* When more events came in together, have them handled next. */
++	if (mouse_event_waiting())
++		put_back(KEY_MOUSE);
++
++	latest_bstate = event.bstate;
++
+ 	in_middle = wenclose(midwin, event.y, event.x);
+ 	in_footer = wenclose(footwin, event.y, event.x);
+ 
+@@ -1669,6 +1760,11 @@ int get_mouseinput(int *mouse_y, int *mouse_x, bool allow_shortcuts)
+ 			/* Clicks outside of the bottom window are handled elsewhere. */
+ 			return 0;
+ 	}
++#ifndef NANO_TINY
++	/* A press of the first button in the edit window may start a drag. */
++	else if ((event.bstate & BUTTON1_PRESSED) && in_middle)
++		return 3;
++#endif
+ #if NCURSES_MOUSE_VERSION >= 2
+ 	/* Handle "presses" of the fourth and fifth mouse buttons
+ 	 * (upward and downward rolls of the mouse wheel). */
