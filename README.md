@@ -6,6 +6,9 @@ Editor-style mouse selection and a working system clipboard for **GNU nano 7.2**
 
 Stock nano 7.2 can place the cursor with the mouse, but it can't select text with it, and its copy (Alt+6) never reaches your system clipboard. This patch adds both. Nothing else changes.
 
+> **Works on:** Ubuntu 24.04 LTS and Debian 12.
+> **Not yet:** Ubuntu 22.04 (nano 6.2) and Ubuntu 26.04 LTS (nano 8.7.1). Versions for these are coming. On them, `install.sh` stops with a message and changes nothing.
+
 ```sh
 git clone https://github.com/DohaerisAI/nano-mouse.git
 cd nano-mouse && ./install.sh
