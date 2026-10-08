@@ -55,6 +55,65 @@ jobs:
           ./uninstall.sh --system
           test ! -e /usr/local/bin/nano
 
+  # The proposal for upstream nano: build nano's git master (at the commit that
+  # the patches are based on) with the patch series, using nano's own autogen.sh,
+  # and run the tests in "upstream" mode against an unpatched build of the same.
+  upstream:
+    name: nano master + upstream/ patches on ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Ubuntu 24.04, container: '' }
+          - { name: Fedora Rawhide, container: 'fedora:rawhide' }
+          - { name: Debian unstable, container: 'debian:sid' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install the build tools
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf install -y -q git gcc make autoconf automake gettext-devel ncurses-devel \
+                texinfo groff python3 coreutils diffutils
+          else
+            sudo=$([ "$(id -u)" -eq 0 ] || echo sudo)
+            $sudo apt-get update -qq
+            $sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git build-essential \
+                autoconf automake autopoint gettext libncurses-dev pkg-config texinfo groff python3
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Get nano's git master at the base commit of the patches
+        run: |
+          base=$(sed -n 's/^base-commit: //p' upstream/0001-*.patch)
+          git clone -q https://git.savannah.gnu.org/git/nano.git "$RUNNER_TEMP/nano"
+          git -C "$RUNNER_TEMP/nano" checkout -q "$base"
+          git -C "$RUNNER_TEMP/nano" log -1 --format='%h %ad %s' --date=short
+
+      - name: Build unpatched nano (for the "same as stock" checks)
+        working-directory: ${{ runner.temp }}/nano
+        run: |
+          ./autogen.sh > /dev/null
+          ./configure -q && make -s -j"$(nproc)" > /dev/null
+          cp src/nano "$RUNNER_TEMP/nano-stock"
+
+      - name: Apply the patches and build again
+        working-directory: ${{ runner.temp }}/nano
+        run: |
+          git -c user.name=ci -c user.email=ci@localhost am -q "$GITHUB_WORKSPACE"/upstream/*.patch
+          make -s -j"$(nproc)" > /dev/null
+          src/nano --version | head -n 1
+
+      - name: Run the tests
+        run: |
+          FLAVOR=upstream NANO="$RUNNER_TEMP/nano/src/nano" STOCK_NANO="$RUNNER_TEMP/nano-stock" \
+            python3 tests/nanotest.py | tee tests.log
+          ! grep -q '^FAIL' tests.log
+
   # On a version tag, build ready-made binaries.  They are built on Debian 12
   # (the older glibc), so they run on both Debian 12 and Ubuntu 24.04.
   binary:

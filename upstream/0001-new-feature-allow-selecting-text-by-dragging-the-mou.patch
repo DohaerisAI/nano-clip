@@ -1,0 +1,412 @@
+From c58f0e75ad4573ac82753f90d34bec47185c3576 Mon Sep 17 00:00:00 2001
+From: Jewel Chowdhury <portgasdjewel@gmail.com>
+Date: Thu, 8 Oct 2026 15:38:13 +0000
+Subject: [PATCH 1/5] new feature: allow selecting text by dragging the mouse
+
+When the mouse is enabled, pressing the first button in the edit window
+and moving the pointer while the button is held selects the text between
+the two spots, like a shifted selection.  While the pointer rests above
+or below the edit window, the viewport keeps scrolling, so a selection
+can be extended beyond what is visible.
+
+Ncurses asks the terminal only for button events (xterm mode 1000), also
+when REPORT_MOUSE_POSITION is in the mask, so nano asks for drag events
+(mode 1002) itself -- again each time that ncurses has reinitialized the
+mouse, after a resize or a suspension.  The click interval is set to zero
+to get the raw presses and releases.
+
+When several mouse events arrive together, ncurses reports them with one
+KEY_MOUSE, and getmouse() then returns them newest first.  So, fetch all
+of them, and handle them oldest first.
+
+Assisted-by: Claude (Anthropic)
+---
+ src/global.c     |   4 +
+ src/nano.c       | 193 ++++++++++++++++++++++++++++++++++++++++++-----
+ src/prototypes.h |   5 ++
+ src/winio.c      |  58 +++++++++++++-
+ 4 files changed, 241 insertions(+), 19 deletions(-)
+
+diff --git a/src/global.c b/src/global.c
+index a7549ceb..d32a2545 100644
+--- a/src/global.c
++++ b/src/global.c
+@@ -148,6 +148,10 @@ int editwincols = -1;
+ 		/* The number of usable columns in the edit window: COLS - margin. */
+ int margin = 0;
+ 		/* The amount of space reserved at the left for line numbers. */
++#ifdef ENABLE_MOUSE
++bool want_drag_events = FALSE;
++		/* Whether the terminal still needs to be asked for drag events. */
++#endif
+ int sidebar = 0;
+ 		/* Becomes 1 when the indicator "scroll bar" must be shown. */
+ #ifndef NANO_TINY
+diff --git a/src/nano.c b/src/nano.c
+index 9d3cab54..609ce406 100644
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -451,12 +451,22 @@ void disable_mouse_support(void)
+ {
+ 	mousemask(0, NULL);
+ 	mouseinterval(oldinterval);
++
++	/* Stop the reporting of movements while a button is held. */
++	printf("\x1B[?1002l");
++	fflush(stdout);
++	want_drag_events = FALSE;
+ }
+ 
+ void enable_mouse_support(void)
+ {
+-	mousemask(ALL_MOUSE_EVENTS, NULL);
+-	oldinterval = mouseinterval(50);
++	mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
++	/* Get raw presses and releases instead of clicks, to allow dragging. */
++	oldinterval = mouseinterval(0);
++
++	/* Ncurses asks the terminal only for button events (mode 1000),
++	 * so ask for drag events (mode 1002) before the next read. */
++	want_drag_events = TRUE;
+ }
+ 
+ /* Switch mouse support on or off, as needed. */
+@@ -1235,6 +1245,11 @@ void terminal_init(void)
+ 	printf("\x1B[?2004h");
+ 	fflush(stdout);
+ #endif
++#ifdef ENABLE_MOUSE
++	/* When ncurses reenables the mouse, it switches off drag events. */
++	if (ISSET(USE_MOUSE))
++		want_drag_events = TRUE;
++#endif
+ }
+ 
+ /* Ask ncurses for a keycode, or assign a default one. */
+@@ -1325,12 +1340,169 @@ void unbound_key(int code)
+ }
+ 
+ #ifdef ENABLE_MOUSE
++/* Move the cursor to the given row and column of the edit window.  The row
++ * may lie just outside of the window, which makes the viewport scroll. */
++static void move_cursor_to_spot(int row, int col)
++{
++	ssize_t row_count = row - openfile->cursor_row;
++	size_t leftedge;
++
++#ifndef NANO_TINY
++	if (ISSET(SOFTWRAP))
++		leftedge = leftedge_for(xplustabs(), openfile->current);
++	else
++#endif
++		leftedge = get_page_start(xplustabs());
++
++	/* Move current up or down to the row that was clicked on. */
++	if (row_count < 0)
++		go_back_chunks(-row_count, &openfile->current, &leftedge);
++	else
++		go_forward_chunks(row_count, &openfile->current, &leftedge);
++
++	openfile->current_x = actual_x(openfile->current->data,
++							actual_last_column(leftedge, (col < 0) ? 0 : col));
++}
++
++#ifndef NANO_TINY
++/* Whether a drag was cut short, so that its button release gets ignored. */
++static bool drag_interrupted = FALSE;
++
++/* Follow the mouse while its first button is held down, selecting the text
++ * between the spot where the button was pressed and the pointer.  While the
++ * pointer rests above or below the text area, keep scrolling.  Return TRUE
++ * when the pointer moved, and FALSE when it was a plain click. */
++static bool drag_to_select(void)
++{
++	linestruct *anchor = openfile->current;
++	size_t anchor_x = openfile->current_x;
++	int toprow = getbegy(midwin);
++	int row = 0, col = 0, edge = 0;
++	bool moved = FALSE;
++	MEVENT event;
++
++	while (TRUE) {
++		linestruct *was_current = openfile->current;
++		int input;
++
++		if (refresh_needed)
++			edit_refresh();
++		else {
++			place_the_cursor();
++			wnoutrefresh(midwin);
++		}
++		doupdate();
++
++		/* Handle mouse events that came in together before reading more. */
++		if (mouse_event_waiting())
++			input = KEY_MOUSE;
++		else {
++			/* At an edge, wait only briefly, so that the scrolling
++			 * continues also when the pointer does not move. */
++			wtimeout(midwin, edge ? 50 : -1);
++			input = wgetch(midwin);
++			wtimeout(midwin, -1);
++		}
++
++		if (input == KEY_MOUSE) {
++			if (!fetch_mouse_event(&event))
++				continue;
++			if (event.bstate & (BUTTON1_RELEASED | BUTTON1_CLICKED))
++				break;
++			if (!(event.bstate & REPORT_MOUSE_POSITION))
++				continue;
++
++			row = event.y - toprow;
++			col = event.x - getbegx(midwin) - margin;
++
++			/* The pointer is at an edge when it is beyond the text area,
++			 * or on its first or last row when that is the screen edge. */
++			if (row < 0 || (row == 0 && toprow == 0))
++				edge = -1;
++			else if (row >= editwinrows || (row == editwinrows - 1 &&
++										toprow + editwinrows == LINES))
++				edge = 1;
++			else
++				edge = 0;
++		} else if (input != ERR) {
++			/* A keystroke ends the drag; let it be handled normally. */
++			put_back(input);
++			drag_interrupted = TRUE;
++			break;
++		} else if (the_window_resized) {
++			regenerate_screen();
++			drag_interrupted = TRUE;
++			break;
++		} else if (!edge)
++			continue;
++
++		/* On the first movement, anchor the selection where the button
++		 * was pressed.  Like a shifted selection, it goes away when the
++		 * cursor is moved without Shift. */
++		if (!moved) {
++			openfile->mark = anchor;
++			openfile->mark_x = anchor_x;
++			openfile->softmark = TRUE;
++			moved = TRUE;
++		}
++
++		/* At an edge, go one row beyond the visible ones, to scroll. */
++		move_cursor_to_spot((edge < 0) ? -1 : (edge > 0) ? editwinrows : row, col);
++		edit_redraw(was_current, FLOWING);
++	}
++
++	return moved;
++}
++#endif
++
+ /* Handle a mouse click in the edit window or the help lines. */
+ int process_click(void)
+ {
+ 	int click_row, click_col;
+ 	int retval = get_mouseinput(&click_row, &click_col);  /* Handles shortcuts. */
+ 
++#ifndef NANO_TINY
++	/* A press of the first button in the edit window may begin a drag. */
++	if (retval == 3) {
++		linestruct *was_current = openfile->current;
++		size_t was_x = openfile->current_x;
++		bool had_selection = (openfile->mark && openfile->softmark);
++
++		drag_interrupted = FALSE;
++
++		if (!wmouse_trafo(midwin, &click_row, &click_col, FALSE))
++			return 2;
++
++		/* Like a cursor movement, a click discards a shifted selection. */
++		if (had_selection) {
++			openfile->mark = NULL;
++			refresh_needed = TRUE;
++		}
++
++		move_cursor_to_spot(click_row, click_col);
++		edit_redraw(was_current, CENTERING);
++
++		/* Clicking there where the cursor is toggles the mark. */
++		if (!drag_to_select() && !had_selection &&
++						openfile->current == was_current && openfile->current_x == was_x) {
++			do_mark();
++			if (ISSET(STATEFLAGS))
++				titlebar(NULL);
++			return 2;
++		}
++
++		/* The cursor moved; clean the cutbuffer on the next cut. */
++		keep_cutbuffer = FALSE;
++		return 2;
++	}
++
++	/* When a drag was interrupted, ignore the release of the button. */
++	if (retval == 0 && drag_interrupted) {
++		drag_interrupted = FALSE;
++		return 2;
++	}
++#endif
++
+ 	/* If the click is wrong or already handled, we're done. */
+ 	if (retval != 0)
+ 		return retval;
+@@ -1338,25 +1510,12 @@ int process_click(void)
+ 	/* If the click was in the edit window, put the cursor in that spot. */
+ 	if (wmouse_trafo(midwin, &click_row, &click_col, FALSE)) {
+ 		linestruct *was_current = openfile->current;
+-		ssize_t row_count = click_row - openfile->cursor_row;
+-		size_t leftedge;
+ #ifndef NANO_TINY
++		ssize_t row_count = click_row - openfile->cursor_row;
+ 		size_t was_x = openfile->current_x;
+-
+-		if (ISSET(SOFTWRAP))
+-			leftedge = leftedge_for(xplustabs(), openfile->current);
+-		else
+ #endif
+-			leftedge = get_page_start(xplustabs());
+-
+-		/* Move current up or down to the row that was clicked on. */
+-		if (row_count < 0)
+-			go_back_chunks(-row_count, &openfile->current, &leftedge);
+-		else
+-			go_forward_chunks(row_count, &openfile->current, &leftedge);
+ 
+-		openfile->current_x = actual_x(openfile->current->data,
+-								actual_last_column(leftedge, click_col));
++		move_cursor_to_spot(click_row, click_col);
+ 
+ #ifndef NANO_TINY
+ 		/* Clicking there where the cursor is toggles the mark. */
+diff --git a/src/prototypes.h b/src/prototypes.h
+index d676d094..9460a52b 100644
+--- a/src/prototypes.h
++++ b/src/prototypes.h
+@@ -102,6 +102,9 @@ extern WINDOW *footwin;
+ extern int editwinrows;
+ extern int editwincols;
+ extern int margin;
++#ifdef ENABLE_MOUSE
++extern bool want_drag_events;
++#endif
+ extern int sidebar;
+ #ifndef NANO_TINY
+ extern int *bardata;
+@@ -611,6 +614,8 @@ int get_input(WINDOW *win);
+ int get_kbinput(WINDOW *win, bool showcursor);
+ char *get_verbatim_kbinput(WINDOW *win, size_t *count);
+ #ifdef ENABLE_MOUSE
++bool fetch_mouse_event(MEVENT *event);
++bool mouse_event_waiting(void);
+ int get_mouseinput(int *mouse_y, int *mouse_x);
+ #endif
+ void blank_edit(void);
+diff --git a/src/winio.c b/src/winio.c
+index e697d328..03b7e338 100644
+--- a/src/winio.c
++++ b/src/winio.c
+@@ -198,6 +198,15 @@ void read_keys_from(WINDOW *frame)
+ 	/* Before reading the first keycode, display any pending screen updates. */
+ 	doupdate();
+ 
++#ifdef ENABLE_MOUSE
++	/* Ask for drag events only after ncurses has sent its mouse settings. */
++	if (want_drag_events) {
++		printf("\x1B[?1002h");
++		fflush(stdout);
++		want_drag_events = FALSE;
++	}
++#endif
++
+ 	if (reveal_cursor && (!spotlighted || ISSET(SHOW_CURSOR) || currmenu == MSPELL) &&
+ 						(LINES > 1 || lastmessage <= HUSH))
+ 		curs_set(1);
+@@ -295,6 +304,12 @@ void read_keys_from(WINDOW *frame)
+ #ifndef NANO_TINY
+ 		if (recording)
+ 			add_to_macrobuffer(input);
++#endif
++#ifdef ENABLE_MOUSE
++		/* Let a mouse event be handled before more input is read, so that
++		 * a drag gets the subsequent mouse events and keystrokes in order. */
++		if (input == KEY_MOUSE)
++			break;
+ #endif
+ 		input = wgetch(frame);
+ 
+@@ -1589,19 +1604,51 @@ char *get_verbatim_kbinput(WINDOW *frame, size_t *count)
+ }
+ 
+ #ifdef ENABLE_MOUSE
++/* Mouse events that ncurses delivered together, the newest one first. */
++static MEVENT mouse_events[8];
++static int mouse_events_waiting = 0;
++
++/* Get the oldest mouse event that has not yet been handled.  When mouse
++ * events arrive in quick succession, ncurses reports them with a single
++ * KEY_MOUSE, and getmouse() then returns them one by one, newest first. */
++bool fetch_mouse_event(MEVENT *event)
++{
++	if (mouse_events_waiting == 0)
++		while (mouse_events_waiting < 8 &&
++						getmouse(&mouse_events[mouse_events_waiting]) == OK)
++			mouse_events_waiting++;
++
++	if (mouse_events_waiting == 0)
++		return FALSE;
++
++	*event = mouse_events[--mouse_events_waiting];
++	return TRUE;
++}
++
++/* Return TRUE when mouse events are waiting to be fetched. */
++bool mouse_event_waiting(void)
++{
++	return (mouse_events_waiting > 0);
++}
++
+ /* Handle clicks of the first mouse button, and rolls of the mouse wheel.
+  * Store the coordinates of the mouse event in `mouse_x` and `mouse_y`.
+  * Return -1 on error, 0 if the mouse event needs handling, 1 if it has
+- * been handled by putting back keystrokes, or 2 if it's been ignored. */
++ * been handled by putting back keystrokes, 2 if it's been ignored, or 3
++ * if the first button was pressed in the edit window (a possible drag). */
+ int get_mouseinput(int *mouse_y, int *mouse_x)
+ {
+ 	bool in_middle, in_footer;
+ 	MEVENT event;
+ 
+ 	/* First, get the actual mouse event. */
+-	if (getmouse(&event) == ERR)
++	if (!fetch_mouse_event(&event))
+ 		return -1;
+ 
++	/* When more events came in together, have them handled next. */
++	if (mouse_event_waiting())
++		put_back(KEY_MOUSE);
++
+ 	in_middle = wenclose(midwin, event.y, event.x);
+ 	in_footer = wenclose(footwin, event.y, event.x);
+ 
+@@ -1679,6 +1726,13 @@ int get_mouseinput(int *mouse_y, int *mouse_x)
+ 			/* Clicks outside of the bottom window are handled elsewhere. */
+ 			return 0;
+ 	}
++#ifndef NANO_TINY
++	/* A press of the first button in the text (not in the "scrollbar")
++	 * may start a drag. */
++	else if ((event.bstate & BUTTON1_PRESSED) && in_middle && currmenu == MMAIN &&
++								!(sidebar && event.x == (COLS - 1)))
++		return 3;
++#endif
+ #if NCURSES_MOUSE_VERSION >= 2
+ 	/* Handle "presses" of the fourth and fifth mouse buttons
+ 	 * (upward and downward rolls of the mouse wheel). */
+
+base-commit: 4be014115352759e77239821ba79f5f192edb67e
+-- 
+2.43.0
+

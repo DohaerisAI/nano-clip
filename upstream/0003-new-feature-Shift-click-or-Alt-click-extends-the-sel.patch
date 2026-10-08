@@ -1,0 +1,100 @@
+From 52bf772cba63f493467209dcce45cbf2b0c60472 Mon Sep 17 00:00:00 2001
+From: Jewel Chowdhury <portgasdjewel@gmail.com>
+Date: Thu, 8 Oct 2026 15:42:19 +0000
+Subject: [PATCH 3/5] new feature: Shift+click or Alt+click extends the
+ selection
+
+When Shift or Alt is held while clicking in the edit window, the
+selection is extended to the clicked spot -- or, when there is no
+selection, one is started at the cursor.  Holding the button and
+dragging extends it further.
+
+Alt is accepted too, because several terminals (among them Windows
+Terminal) reserve Shift+click for their own selection when an
+application has grabbed the mouse.
+
+Assisted-by: Claude (Anthropic)
+---
+ src/nano.c       | 23 +++++++++++++++++++++++
+ src/prototypes.h |  1 +
+ src/winio.c      | 11 +++++++++++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/src/nano.c b/src/nano.c
+index d97997ad..cbdd5881 100644
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -1580,6 +1580,29 @@ int process_click(void)
+ 		if (!wmouse_trafo(midwin, &click_row, &click_col, FALSE))
+ 			return 2;
+ 
++		/* With Shift or Alt held, extend the selection to the clicked spot,
++		 * starting one at the cursor when there is none. */
++		if (mouse_with_modifier()) {
++			pressed_row = -1;
++
++			if (!openfile->mark) {
++				openfile->mark = openfile->current;
++				openfile->mark_x = openfile->current_x;
++				openfile->softmark = TRUE;
++			}
++
++			top = openfile->mark;
++			top_x = openfile->mark_x;
++
++			move_cursor_to_spot(click_row, click_col);
++			edit_redraw(was_current, CENTERING);
++			refresh_needed = TRUE;
++
++			drag_to_select(BY_CHARS, top, top_x, top, top_x, TRUE);
++			keep_cutbuffer = FALSE;
++			return 2;
++		}
++
+ 		presses = count_presses(click_row, click_col);
+ 
+ 		/* Like a cursor movement, a click discards a shifted selection. */
+diff --git a/src/prototypes.h b/src/prototypes.h
+index 9460a52b..590853ad 100644
+--- a/src/prototypes.h
++++ b/src/prototypes.h
+@@ -616,6 +616,7 @@ char *get_verbatim_kbinput(WINDOW *win, size_t *count);
+ #ifdef ENABLE_MOUSE
+ bool fetch_mouse_event(MEVENT *event);
+ bool mouse_event_waiting(void);
++bool mouse_with_modifier(void);
+ int get_mouseinput(int *mouse_y, int *mouse_x);
+ #endif
+ void blank_edit(void);
+diff --git a/src/winio.c b/src/winio.c
+index 03b7e338..237dcb34 100644
+--- a/src/winio.c
++++ b/src/winio.c
+@@ -1631,6 +1631,15 @@ bool mouse_event_waiting(void)
+ 	return (mouse_events_waiting > 0);
+ }
+ 
++/* The button state of the latest mouse event that get_mouseinput() saw. */
++static mmask_t latest_bstate = 0;
++
++/* Return TRUE when Shift or Alt was held during the latest mouse event. */
++bool mouse_with_modifier(void)
++{
++	return ((latest_bstate & (BUTTON_SHIFT | BUTTON_ALT)) != 0);
++}
++
+ /* Handle clicks of the first mouse button, and rolls of the mouse wheel.
+  * Store the coordinates of the mouse event in `mouse_x` and `mouse_y`.
+  * Return -1 on error, 0 if the mouse event needs handling, 1 if it has
+@@ -1649,6 +1658,8 @@ int get_mouseinput(int *mouse_y, int *mouse_x)
+ 	if (mouse_event_waiting())
+ 		put_back(KEY_MOUSE);
+ 
++	latest_bstate = event.bstate;
++
+ 	in_middle = wenclose(midwin, event.y, event.x);
+ 	in_footer = wenclose(footwin, event.y, event.x);
+ 
+-- 
+2.43.0
+

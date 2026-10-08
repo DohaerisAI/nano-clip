@@ -5,18 +5,28 @@ import os, pty, sys, time, select, re, base64, fcntl, termios, struct, signal, s
 #   python3 tests/nanotest.py               # all tests, against ~/.local/bin/nano
 #   NANO=path/to/nano python3 tests/nanotest.py t_drag_copy t_wheel
 import tempfile
+#   FLAVOR=upstream NANO=... STOCK_NANO=...   # the opt-in variant proposed for nano 9.x
 NANO = os.environ.get("NANO", os.path.expanduser("~/.local/bin/nano"))
 WORK = os.environ.get("WORK") or tempfile.mkdtemp(prefix="nanotest-")
+# "upstream": no built-in clipboard (copying uses nano's own OSC 52 binding from
+# sample.nanorc), and typing replaces a selection only with --zap.
+UP = os.environ.get("FLAVOR") == "upstream"
+STOCK_NANO = os.environ.get("STOCK_NANO")
+TYPEOVER = ("--zap",) if UP else ()
+RCFILE = os.path.join(WORK, "upstream.nanorc")
+if UP:
+    open(RCFILE, "w").write('set mouse\nbind M-* "{execute}|| printf "\\033]52;c;%s\\007" '
+                            '"$(base64 | tr -d \'\\n\')" {enter}{undo}" main\n')
 
 def press(x, y):   return f"\x1b[<0;{x+1};{y+1}M".encode()
 def drag(x, y):    return f"\x1b[<32;{x+1};{y+1}M".encode()
 def release(x, y): return f"\x1b[<0;{x+1};{y+1}m".encode()
 def wheel_down(x, y): return f"\x1b[<65;{x+1};{y+1}M".encode()
 def wheel_up(x, y):   return f"\x1b[<64;{x+1};{y+1}M".encode()
-ALT6 = b"\x1b6"; CTRL_K = b"\x0b"; CTRL_X = b"\x18"; CTRL_S = b"\x13"; DOWN = b"\x1b[B"; ESC = b"\x1b"
+ALT6 = b"\x1b*" if UP else b"\x1b6"; CTRL_K = b"\x0b"; CTRL_X = b"\x18"; CTRL_S = b"\x13"; DOWN = b"\x1b[B"; ESC = b"\x1b"
 
 class Nano:
-    def __init__(self, content, args=(), rows=24, cols=80, name="f.txt"):
+    def __init__(self, content, args=(), rows=24, cols=80, name="f.txt", binary=None):
         self.path = os.path.join(WORK, name)
         open(self.path, "w").write(content)
         self.fd, sfd = pty.openpty()
@@ -27,9 +37,12 @@ class Nano:
             fcntl.ioctl(sfd, termios.TIOCSCTTY, 0)
             for i in (0, 1, 2): os.dup2(sfd, i)
             os.environ.update(TERM="xterm-256color", HOME=WORK)
-            os.execv(NANO, [NANO, "--ignorercfiles", "--mouse", *os.environ.get("EXTRA", "").split(), *args, self.path])
+            rc = ["--rcfile=" + RCFILE] if UP else ["--ignorercfiles", "--mouse"]
+            exe = binary or NANO
+            os.execv(exe, [exe, *rc, *os.environ.get("EXTRA", "").split(), *args, self.path])
         os.close(sfd)
         self.out = b""
+        self.closed = False
         self.pump(0.6)
     def resize_pty(self, rows, cols, fd=None):
         fcntl.ioctl(fd if fd is not None else self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -51,6 +64,8 @@ class Nano:
             os.write(self.fd, c); self.pump(wait)
     def mark(self): return len(self.out)
     def osc52(self, since=0):
+        if UP and not self.closed:   # copying runs a shell command, which may take a moment
+            self.pump(0.4)
         found = re.findall(rb"\x1b\]52;c;([A-Za-z0-9+/=]*)\x07", self.out[since:])
         return [base64.b64decode(f).decode() for f in found]
     def alive(self):
@@ -71,6 +86,7 @@ class Nano:
         else:
             os.kill(self.pid, 9); os.waitpid(self.pid, 0); self.status = "killed"
         os.close(self.fd)
+        self.closed = True
         return open(self.path).read()
     def crashed(self):
         return any(k in self.out for k in (b"realloc", b"corrupted", b"Segmentation", b"Aborted", b"Received SIG"))
@@ -80,6 +96,14 @@ results = []
 def check(name, cond, detail=""):
     results.append((name, bool(cond)))
     print(("PASS " if cond else "FAIL ") + name + ("" if cond else f"  -- {detail}"))
+
+def no_selection(line, content=None):
+    """What a copy sends when nothing is selected: the line (built-in clipboard),
+    or the whole buffer (nano's {execute} binding pipes the buffer)."""
+    return [content if content is not None else LINES] if UP else [line]
+
+ONLY_72 = {"t_big_selection_cap", "t_clipboard_whole_lines", "t_selection_hint",
+           "t_help_mouse_section", "t_view_mode", "t_wheel"}
 
 # Screen layout with --ignorercfiles: y=0 titlebar, y=1.. text (file line k at y=k), y=21 status, y=22-23 shortcuts.
 def t_drag_copy():
@@ -101,7 +125,8 @@ def t_drag_cut():
     got = n.osc52(s)
     after = n.save_and_quit()
     exp_sel = "number 2\nline number 3\nline "
-    check("drag + Ctrl+K sends OSC52 with cut text", got == [exp_sel], repr(got))
+    if not UP:
+        check("drag + Ctrl+K sends OSC52 with cut text", got == [exp_sel], repr(got))
     check("drag + Ctrl+K removes exactly the selection from file", after == LINES.replace(exp_sel, "", 1), repr(after[:80]))
 
 def t_backwards_drag():
@@ -176,7 +201,7 @@ def t_click_clears_drag_selection():
     s = n.mark()
     n.send(press(0, 10), release(0, 10), ALT6)   # click elsewhere then copy -> copies whole line 10 (no mark)
     got = n.osc52(s)
-    check("click elsewhere discards the drag selection (Alt+6 copies the line)", got == ["line number 10\n"], repr(got))
+    check("click elsewhere discards the drag selection (Alt+6 copies the line)", got == no_selection("line number 10\n"), repr(got)[:80])
     n.quit()
 
 def t_wheel():
@@ -198,11 +223,11 @@ def t_arrow_clears_selection():
     n.send(press(0, 3), drag(4, 5), release(4, 5), DOWN)
     s = n.mark()
     n.send(ALT6)
-    check("arrow key after drag clears selection (Alt+6 then copies the line)", n.osc52(s) == ["line number 6\n"], repr(n.osc52(s)))
+    check("arrow key after drag clears selection (Alt+6 then copies the line)", n.osc52(s) == no_selection("line number 6\n"), repr(n.osc52(s))[:80])
     n.quit()
 
 def t_typing_after_drag():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     s = n.mark()
     n.send(press(0, 3), drag(4, 5), release(4, 5), b"Z")
     after = n.save_and_quit()
@@ -248,7 +273,7 @@ def t_linenumbers():
     n.quit()
 
 def t_key_during_drag():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(press(0, 3), drag(4, 5), b"Q", release(4, 7))
     n.send(ALT6)
     after_alive = n.alive()
@@ -329,7 +354,7 @@ def t_right_button_drag():
     n = Nano(LINES)
     s = n.mark()
     n.send(b"\x1b[<2;5;5M", b"\x1b[<34;6;6M", b"\x1b[<34;8;8M", b"\x1b[<2;8;8m", ALT6)
-    check("right-button drag is ignored (no selection: Alt+6 copies the line)", n.osc52(s) == ["line number 1\n"] and n.alive(), repr(n.osc52(s)))
+    check("right-button drag is ignored (no selection: Alt+6 copies the line)", n.osc52(s) == no_selection("line number 1\n") and n.alive(), repr(n.osc52(s))[:80])
     n.quit()
 
 def t_fast_burst():
@@ -387,7 +412,7 @@ def t_triple_click_line():
     s = n.mark(); clicks(n, 6, 4, 3); n.send(ALT6)
     check("triple-click selects the whole line incl. newline", n.osc52(s) == ["line number 4\n"], repr(n.osc52(s)))
     s = n.mark(); clicks(n, 6, 7, 4); n.send(ALT6)
-    check("fourth click is a plain click again (Alt+6 copies the line)", n.osc52(s) == ["line number 7\n"], repr(n.osc52(s)))
+    check("fourth click is a plain click again (Alt+6 copies the line)", n.osc52(s) == no_selection("line number 7\n"), repr(n.osc52(s))[:80])
     n.quit()
 
 def t_slow_clicks_are_not_double():
@@ -398,7 +423,7 @@ def t_slow_clicks_are_not_double():
     check("two slow clicks on the same spot: second toggles the mark (old behavior)", b"Mark Set" in n.out[s:])
     s = n.mark()
     n.send(press(6, 4), release(6, 4), wait=0.05); n.send(press(6, 5), release(6, 5), wait=0.3); n.send(ALT6)
-    check("quick clicks on different spots are not a double click", n.osc52(s) in ([], ["line number 5\n"]) or b"Mark" in n.out[s:], repr(n.osc52(s)))
+    check("quick clicks on different spots are not a double click", n.osc52(s) in ([], no_selection("line number 5\n")) or b"Mark" in n.out[s:], repr(n.osc52(s))[:80])
     n.quit()
 
 def t_double_click_drag_words():
@@ -457,14 +482,14 @@ def t_shift_click_keeps_hard_mark():
     n.quit()
 
 def t_type_over_and_undo():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(press(5, 2), drag(6, 3), release(6, 3), b"ZZ", wait=0.3)
     n.send(b"\x1bu", wait=0.2); n.send(b"\x1bu", wait=0.3)   # Alt+U twice
     after = n.save_and_quit()
     check("typed-over selection comes back with two undos", after == LINES, after.split("\n")[:4])
 
 def t_backspace_delete_selection():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(press(5, 2), drag(6, 3), release(6, 3), b"\x7f", wait=0.2)          # Backspace
     n.send(press(0, 5), drag(5, 5), release(5, 5), b"\x1b[3~", wait=0.2)       # Delete
     after = n.save_and_quit()
@@ -474,25 +499,28 @@ def t_backspace_delete_selection():
     check("Backspace and Delete remove a selection", after == "\n".join(L), after.split("\n")[:5])
 
 def t_shift_arrow_type_over():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(b"\x1b[1;2C" * 4, wait=0.2); n.send(b"Q")       # Shift+Right x4, type
     after = n.save_and_quit()
     check("typing over a Shift+arrow selection replaces it", after.split("\n")[0] == "Q number 1", after.split("\n")[0])
 
 def t_hard_mark_not_typed_over():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(b"\x1e", wait=0.2); n.send(b"\x1b[C" * 4, wait=0.2); n.send(b"Q")   # ^6 mark, Right x4, type
     after = n.save_and_quit()
-    check("typing with a hard mark (^6) inserts as before", after.split("\n")[0] == "lineQ number 1", after.split("\n")[0])
+    if UP:   # with --zap, like Backspace and Delete, typing replaces any marked region
+        check("--zap: typing replaces a region marked with ^6", after.split("\n")[0] == "Q number 1", after.split("\n")[0])
+    else:
+        check("typing with a hard mark (^6) inserts as before", after.split("\n")[0] == "lineQ number 1", after.split("\n")[0])
 
 def t_empty_selection_type():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(press(4, 3), drag(6, 3), drag(4, 3), release(4, 3), b"Q")
     after = n.save_and_quit()
     check("typing with an empty drag selection just inserts", after.split("\n")[2] == "lineQ number 3", after.split("\n")[2])
 
 def t_paste_over_selection():
-    n = Nano(LINES)
+    n = Nano(LINES, args=TYPEOVER)
     n.send(press(0, 2), drag(4, 3), release(4, 3), b"\x1b[200~PASTED\x1b[201~", wait=0.4)
     after = n.save_and_quit()
     check("bracketed paste replaces a selection", after.split("\n")[1] == "PASTED number 3", after.split("\n")[:3])
@@ -552,10 +580,37 @@ def t_help_mouse_section():
     n.send(CTRL_X, wait=0.3)
     n.quit()
 
+def t_without_zap_typing_is_unchanged():
+    if not UP: return
+    n = Nano(LINES)
+    n.send(press(0, 3), drag(4, 5), release(4, 5), b"Z")
+    after = n.save_and_quit()
+    exp = LINES.split("\n"); exp[4] = "lineZ number 5"
+    check("without --zap, typing after a drag inserts and drops the selection (stock behavior)", after == "\n".join(exp), after.split("\n")[2:6])
+
+def same_as_stock(label, args, steps):
+    """Run the same keystrokes in the stock and the patched nano, then compare the saved files."""
+    if not (UP and STOCK_NANO): return
+    results = []
+    for exe in (STOCK_NANO, NANO):
+        n = Nano(LINES, args=args, binary=exe)
+        for chunk in steps: n.send(chunk, wait=0.25)
+        n.send(b"X"); results.append(n.save_and_quit())
+    check(label, results[0] == results[1], [r.split("\n").index(next(l for l in r.split("\n") if "X" in l)) for r in results])
+
+def t_wheel_same_as_stock():
+    same_as_stock("mouse wheel behaves exactly as in stock nano", (),
+                  [wheel_down(5, 5), wheel_down(5, 5), wheel_up(5, 5)])
+
+def t_scrollbar_same_as_stock():
+    same_as_stock("clicking the scrollbar (--indicator) behaves exactly as in stock nano", ("--indicator",),
+                  [press(79, 12) + release(79, 12)])
+
 tests = [t for name, t in list(globals().items()) if name.startswith("t_")]
 only = sys.argv[1:]
 for t in tests:
     if only and t.__name__ not in only: continue
+    if UP and t.__name__ in ONLY_72: continue
     try: t()
     except Exception as e: check(t.__name__ + " raised", False, repr(e))
 print(f"\n{sum(ok for _, ok in results)}/{len(results)} passed")

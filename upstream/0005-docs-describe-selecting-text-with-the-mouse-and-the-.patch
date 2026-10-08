@@ -1,0 +1,138 @@
+From 4a4cf760179efed4a4cb663739346f827201f169 Mon Sep 17 00:00:00 2001
+From: Jewel Chowdhury <portgasdjewel@gmail.com>
+Date: Thu, 8 Oct 2026 16:19:41 +0000
+Subject: [PATCH 5/5] docs: describe selecting text with the mouse, and the
+ extended --zap
+
+Also say how to set the mark with a click without suggesting that a
+double click does it, as a double click now selects a word.
+
+Assisted-by: Claude (Anthropic)
+---
+ doc/nano.1    | 14 +++++++++-----
+ doc/nano.texi | 22 +++++++++++++++-------
+ doc/nanorc.5  | 15 ++++++++++-----
+ 3 files changed, 34 insertions(+), 17 deletions(-)
+
+diff --git a/doc/nano.1 b/doc/nano.1
+index e3b2956f..4f6f0fe2 100644
+--- a/doc/nano.1
++++ b/doc/nano.1
+@@ -261,7 +261,8 @@ defined in the \fInanorc\fR files.
+ .TP
+ .BR \-Z ", " \-\-zap
+ Let an unmodified Backspace or Delete erase the marked region
+-(instead of a single character, and without affecting the cutbuffer).
++(instead of a single character, and without affecting the cutbuffer),
++and let typed or pasted text replace it.
+ .TP
+ .BR \-a ", " \-\-atblanks
+ When doing soft line wrapping, wrap lines at whitespace
+@@ -317,10 +318,13 @@ Display line numbers to the left of the text area.
+ .TP
+ .BR \-m ", " \-\-mouse
+ Enable mouse support, if available for your system.  When enabled, mouse
+-clicks can be used to place the cursor, set the mark (with a double
+-click), and execute shortcuts.  The mouse works in the X Window
+-System, and on the console when gpm is running.  Text can still be
+-selected through dragging by holding down the Shift key.
++clicks can be used to place the cursor, set the mark (by clicking where
++the cursor is), and execute shortcuts.  Dragging selects text (scrolling
++when the pointer is above or below the text), a double click selects a
++word, a triple click a line, and Shift+click or Alt+click extends the
++selection.  The mouse works in the X Window System, and on the console
++when gpm is running.  In many terminals, text can still be selected in
++the normal way through dragging while holding down the Shift key.
+ .TP
+ .BR \-n ", " \-\-noread
+ Treat any name given on the command line as a new file.  This allows
+diff --git a/doc/nano.texi b/doc/nano.texi
+index b86f0af3..78547233 100644
+--- a/doc/nano.texi
++++ b/doc/nano.texi
+@@ -604,7 +604,8 @@ Specify the syntax to be used for highlighting.
+ @item -Z
+ @itemx --zap
+ Let an unmodified @kbd{Backspace} or @kbd{Delete} erase the marked region
+-(instead of a single character, and without affecting the cutbuffer).
++(instead of a single character, and without affecting the cutbuffer),
++and let typed or pasted text replace it.
+ 
+ @item -a
+ @itemx --atblanks
+@@ -674,10 +675,14 @@ Display line numbers to the left of the text area.
+ @item -m
+ @itemx --mouse
+ Enable mouse support, if available for your system.  When enabled, mouse
+-clicks can be used to place the cursor, set the mark (with two clicks),
+-and execute shortcuts.  The mouse works in the X Window System, and on
+-the console when gpm is running.  Text can still be selected through
+-dragging by holding down the Shift key.
++clicks can be used to place the cursor, set the mark (by clicking where
++the cursor is), and execute shortcuts.  Dragging selects text (scrolling
++when the pointer is above or below the text), a double click selects a
++word, a triple click a line, and @kbd{Shift+click} or @kbd{Alt+click}
++extends the selection.  The mouse works in the X Window System, and on
++the console when gpm is running.  In many terminals, text can still be
++selected in the normal way through dragging while holding down the
++@kbd{Shift} key.
+ 
+ @item -n
+ @itemx --noread
+@@ -1135,7 +1140,9 @@ Use this color combination for the mini bar.
+ 
+ @item set mouse
+ Enable mouse support, so that mouse clicks can be used to place the
+-cursor, set the mark (with two clicks), or execute shortcuts.
++cursor, set the mark (by clicking where the cursor is), or execute
++shortcuts, and dragging, double clicks, and triple clicks can be used
++to select text.
+ 
+ @item set newbuffer
+ When reading in a file with @kbd{^R}, insert it into a new buffer by default.
+@@ -1313,7 +1320,8 @@ probably want to unset @code{wordbounds}.
+ 
+ @item set zap
+ Let an unmodified @kbd{Backspace} or @kbd{Delete} erase the marked region
+-(instead of a single character, and without affecting the cutbuffer).
++(instead of a single character, and without affecting the cutbuffer),
++and let typed or pasted text replace it.
+ 
+ @item set zero
+ Hide all elements of the interface (title bar, status bar, and help lines)
+diff --git a/doc/nanorc.5 b/doc/nanorc.5
+index d333bcb2..b9546358 100644
+--- a/doc/nanorc.5
++++ b/doc/nanorc.5
+@@ -239,10 +239,14 @@ See \fBset \%titlecolor\fR for more details.
+ .TP
+ .B set mouse
+ Enable mouse support, if available for your system.  When enabled,
+-mouse clicks can be used to place the cursor, set the mark (with two
+-clicks), and execute shortcuts.  The mouse works in the X Window
+-System, and on the console when gpm is running.  Text can still be
+-selected through dragging by holding down the Shift key.
++mouse clicks can be used to place the cursor, set the mark (by clicking
++where the cursor is), and execute shortcuts.  Dragging selects text
++(scrolling when the pointer is above or below the text), a double click
++selects a word, a triple click a line, and Shift+click or Alt+click
++extends the selection.  The mouse works in the X Window System, and on
++the console when gpm is running.  In many terminals, text can still be
++selected in the normal way through dragging while holding down the
++Shift key.
+ .TP
+ .B set newbuffer
+ When reading in a file with \fB^R\fR, insert it into a new buffer by default.
+@@ -442,7 +446,8 @@ probably want to unset \fB\%wordbounds\fR.
+ .TP
+ .B set zap
+ Let an unmodified Backspace or Delete erase the marked region
+-(instead of a single character, and without affecting the cutbuffer).
++(instead of a single character, and without affecting the cutbuffer),
++and let typed or pasted text replace it.
+ .TP
+ .B set zero
+ Hide all elements of the interface (title bar, status bar, and help lines)
+-- 
+2.43.0
+

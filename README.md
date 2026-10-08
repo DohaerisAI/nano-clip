@@ -121,7 +121,9 @@ NANO=/path/to/nano python3 tests/nanotest.py     # tests another binary
 
 ## Status
 
-This is an independent patch. It is **not part of GNU nano** and is not endorsed by the GNU project. It targets nano 7.2 only. The plan is to propose these features to the nano developers for the current version of nano.
+This is an independent patch. It is **not part of GNU nano** and is not endorsed by the GNU project. It targets nano 7.2 only.
+
+A version reshaped for the current nano (git master, 9.x) is being proposed to the nano developers. See [`upstream/`](upstream/). In that version, typing over a selection is opt-in through `--zap`, and there's no built-in clipboard, because nano 8.7 and later can bind OSC 52 copying in the nanorc.
 
 ## License
 

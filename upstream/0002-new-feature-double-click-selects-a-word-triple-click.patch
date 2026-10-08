@@ -1,0 +1,246 @@
+From a8b009235b303e555d3a9ef3075a8d11b17bc749 Mon Sep 17 00:00:00 2001
+From: Jewel Chowdhury <portgasdjewel@gmail.com>
+Date: Thu, 8 Oct 2026 15:40:28 +0000
+Subject: [PATCH 2/5] new feature: double-click selects a word, triple-click
+ selects a line
+
+A double click selects the run of word characters, blanks, or other
+characters that contains the clicked spot; the underscore counts as a
+word character here, as it does in names in code.  A triple click
+selects the whole line, including its line break.  When the button is
+held after the last click, dragging extends the selection by words or
+by lines.
+
+As the click interval was set to zero (to allow dragging), ncurses no
+longer reports double and triple clicks, so count the presses on the
+same spot within half a second.
+
+Assisted-by: Claude (Anthropic)
+---
+ src/nano.c | 161 ++++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 146 insertions(+), 15 deletions(-)
+
+diff --git a/src/nano.c b/src/nano.c
+index 609ce406..d97997ad 100644
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -36,6 +36,7 @@
+ #include <string.h>
+ #ifdef HAVE_TERMIOS_H
+ #include <termios.h>
++#include <time.h>
+ #endif
+ #include <unistd.h>
+ #ifdef __linux__
+@@ -1368,14 +1369,114 @@ static void move_cursor_to_spot(int row, int col)
+ /* Whether a drag was cut short, so that its button release gets ignored. */
+ static bool drag_interrupted = FALSE;
+ 
++/* The units by which a mouse selection grows; also the number of clicks. */
++#define BY_CHARS  1
++#define BY_WORDS  2
++#define BY_LINES  3
++
++/* The spot and time of the latest press of the first mouse button. */
++static int pressed_row = -1, pressed_col = -1, press_count = 0;
++static struct timespec pressed_time;
++
++/* Return how many times in a row (1 to 3) the first mouse button has been
++ * pressed on the given spot, each press within half a second of the last. */
++static int count_presses(int row, int col)
++{
++	struct timespec now;
++	long elapsed;
++
++	clock_gettime(CLOCK_MONOTONIC, &now);
++	elapsed = (now.tv_sec - pressed_time.tv_sec) * 1000 +
++				(now.tv_nsec - pressed_time.tv_nsec) / 1000000;
++
++	if (row == pressed_row && col == pressed_col && elapsed < 500)
++		press_count = press_count % 3 + 1;
++	else
++		press_count = 1;
++
++	pressed_time = now;
++	pressed_row = row;
++	pressed_col = col;
++
++	return press_count;
++}
++
++/* Return 2 for a word character (including the underscore, as in names
++ * in code), 1 for a blank, and 0 for anything else. */
++static int kind_of_char(const char *spot)
++{
++	if (is_word_char(spot, FALSE) || *spot == '_')
++		return 2;
++	else
++		return (is_blank_char(spot) ? 1 : 0);
++}
++
++/* Determine the start and end of the unit (a single spot, a run of similar
++ * characters, or a whole line) that contains the given spot. */
++static void unit_around(int unit, linestruct *line, size_t x, linestruct **start,
++						size_t *start_x, linestruct **end, size_t *end_x)
++{
++	*start = line;
++	*end = line;
++	*start_x = x;
++	*end_x = x;
++
++	if (unit == BY_WORDS && (line->data[x] != '\0' || x > 0)) {
++		/* Beyond the end of the line, take the last run of characters. */
++		size_t spot = (line->data[x] == '\0') ? step_left(line->data, x) : x;
++		int kind = kind_of_char(line->data + spot);
++
++		*start_x = spot;
++		while (*start_x > 0 && kind_of_char(line->data +
++							step_left(line->data, *start_x)) == kind)
++			*start_x = step_left(line->data, *start_x);
++
++		*end_x = spot;
++		while (line->data[*end_x] != '\0' &&
++							kind_of_char(line->data + *end_x) == kind)
++			*end_x = step_right(line->data, *end_x);
++	} else if (unit == BY_LINES) {
++		*start_x = 0;
++		if (line->next) {
++			*end = line->next;
++			*end_x = 0;
++		} else
++			*end_x = strlen(line->data);
++	}
++}
++
++/* Make the selection run from the anchor (the region between top and bot)
++ * to the unit around the cursor, with the cursor at the far end. */
++static void stretch_selection(int unit, linestruct *top, size_t top_x,
++								linestruct *bot, size_t bot_x)
++{
++	linestruct *start, *end;
++	size_t start_x, end_x;
++
++	unit_around(unit, openfile->current, openfile->current_x,
++								&start, &start_x, &end, &end_x);
++
++	if (start->lineno < top->lineno || (start == top && start_x < top_x)) {
++		openfile->mark = bot;
++		openfile->mark_x = bot_x;
++		openfile->current = start;
++		openfile->current_x = start_x;
++	} else {
++		openfile->mark = top;
++		openfile->mark_x = top_x;
++		openfile->current = end;
++		openfile->current_x = end_x;
++	}
++}
++
+ /* Follow the mouse while its first button is held down, selecting the text
+- * between the spot where the button was pressed and the pointer.  While the
+- * pointer rests above or below the text area, keep scrolling.  Return TRUE
+- * when the pointer moved, and FALSE when it was a plain click. */
+-static bool drag_to_select(void)
++ * between the anchor (the region from top to bot) and the pointer, growing
++ * by the given unit.  When selecting is FALSE, the selection begins only
++ * when the pointer moves.  While the pointer rests above or below the text
++ * area, keep scrolling.  Return TRUE when the pointer moved. */
++static bool drag_to_select(int unit, linestruct *top, size_t top_x,
++						linestruct *bot, size_t bot_x, bool selecting)
+ {
+-	linestruct *anchor = openfile->current;
+-	size_t anchor_x = openfile->current_x;
+ 	int toprow = getbegy(midwin);
+ 	int row = 0, col = 0, edge = 0;
+ 	bool moved = FALSE;
+@@ -1383,6 +1484,8 @@ static bool drag_to_select(void)
+ 
+ 	while (TRUE) {
+ 		linestruct *was_current = openfile->current;
++		linestruct *was_mark = openfile->mark;
++		size_t was_mark_x = openfile->mark_x;
+ 		int input;
+ 
+ 		if (refresh_needed)
+@@ -1436,18 +1539,19 @@ static bool drag_to_select(void)
+ 		} else if (!edge)
+ 			continue;
+ 
+-		/* On the first movement, anchor the selection where the button
+-		 * was pressed.  Like a shifted selection, it goes away when the
++		/* Like a shifted selection, a dragged one goes away when the
+ 		 * cursor is moved without Shift. */
+-		if (!moved) {
+-			openfile->mark = anchor;
+-			openfile->mark_x = anchor_x;
++		if (!moved && !selecting)
+ 			openfile->softmark = TRUE;
+-			moved = TRUE;
+-		}
++		moved = TRUE;
+ 
+ 		/* At an edge, go one row beyond the visible ones, to scroll. */
+ 		move_cursor_to_spot((edge < 0) ? -1 : (edge > 0) ? editwinrows : row, col);
++		stretch_selection(unit, top, top_x, bot, bot_x);
++
++		if (openfile->mark != was_mark || openfile->mark_x != was_mark_x)
++			refresh_needed = TRUE;
++
+ 		edit_redraw(was_current, FLOWING);
+ 	}
+ 
+@@ -1467,12 +1571,17 @@ int process_click(void)
+ 		linestruct *was_current = openfile->current;
+ 		size_t was_x = openfile->current_x;
+ 		bool had_selection = (openfile->mark && openfile->softmark);
++		linestruct *top, *bot;
++		size_t top_x, bot_x;
++		int presses;
+ 
+ 		drag_interrupted = FALSE;
+ 
+ 		if (!wmouse_trafo(midwin, &click_row, &click_col, FALSE))
+ 			return 2;
+ 
++		presses = count_presses(click_row, click_col);
++
+ 		/* Like a cursor movement, a click discards a shifted selection. */
+ 		if (had_selection) {
+ 			openfile->mark = NULL;
+@@ -1482,9 +1591,31 @@ int process_click(void)
+ 		move_cursor_to_spot(click_row, click_col);
+ 		edit_redraw(was_current, CENTERING);
+ 
++		/* A double click selects a word, a triple click a whole line. */
++		if (presses > 1) {
++			unit_around(presses, openfile->current, openfile->current_x,
++										&top, &top_x, &bot, &bot_x);
++			openfile->mark = top;
++			openfile->mark_x = top_x;
++			openfile->softmark = TRUE;
++			openfile->current = bot;
++			openfile->current_x = bot_x;
++			edit_redraw(was_current, FLOWING);
++			refresh_needed = TRUE;
++
++			if (drag_to_select(presses, top, top_x, bot, bot_x, TRUE))
++				pressed_row = -1;
++
++			keep_cutbuffer = FALSE;
++			return 2;
++		}
++
++		if (drag_to_select(BY_CHARS, openfile->current, openfile->current_x,
++								openfile->current, openfile->current_x, FALSE))
++			pressed_row = -1;
+ 		/* Clicking there where the cursor is toggles the mark. */
+-		if (!drag_to_select() && !had_selection &&
+-						openfile->current == was_current && openfile->current_x == was_x) {
++		else if (!had_selection && openfile->current == was_current &&
++										openfile->current_x == was_x) {
+ 			do_mark();
+ 			if (ISSET(STATEFLAGS))
+ 				titlebar(NULL);
+-- 
+2.43.0
+

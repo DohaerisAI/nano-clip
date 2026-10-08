@@ -1,0 +1,69 @@
+From 62d1da93adae7d4733b700a4094ef5bec4d7bd07 Mon Sep 17 00:00:00 2001
+From: Jewel Chowdhury <portgasdjewel@gmail.com>
+Date: Thu, 8 Oct 2026 16:19:04 +0000
+Subject: [PATCH 4/5] new feature: with --zap, typed and pasted text replace a
+ marked region
+
+With --zap, Backspace and Delete erase a marked region.  Let typing a
+character and pasting text replace the region as well, as is common in
+other editors -- in particular after selecting text with the mouse.
+Like Backspace and Delete, this does not touch the cutbuffer, and the
+erasure can be undone.
+
+Without --zap, nothing changes: typing still just drops a soft mark.
+
+Assisted-by: Claude (Anthropic)
+---
+ src/nano.c | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/nano.c b/src/nano.c
+index cbdd5881..0ce0d322 100644
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -1734,6 +1734,19 @@ bool changes_something(functionptrtype f)
+ }
+ 
+ #ifndef NANO_TINY
++/* With --zap, erase a marked region, so that what is typed or pasted
++ * replaces it.  Return TRUE when something was erased. */
++static bool zap_before_insertion(void)
++{
++	if (!openfile->mark || !ISSET(LET_THEM_ZAP) ||
++						(openfile->mark == openfile->current &&
++						openfile->mark_x == openfile->current_x))
++		return FALSE;
++
++	zap_text();
++	return TRUE;
++}
++
+ /* Read in all waiting input bytes and paste them into the buffer in one go. */
+ void suck_up_input_and_paste_it(void)
+ {
+@@ -1763,8 +1776,10 @@ void suck_up_input_and_paste_it(void)
+ 
+ 	if (ISSET(VIEW_MODE))
+ 		print_view_warning();
+-	else
++	else {
++		zap_before_insertion();
+ 		paste_text();
++	}
+ 
+ 	if (input != END_OF_PASTE)
+ 		statusline(ALERT, _("Flawed paste"));
+@@ -1927,7 +1942,9 @@ void process_a_keystroke(void)
+ 			print_view_warning();
+ 		else {
+ #ifndef NANO_TINY
+-			if (openfile->mark && openfile->softmark) {
++			/* With --zap, typed text replaces a marked region;
++			 * otherwise a soft mark just gets dropped. */
++			if (!zap_before_insertion() && openfile->mark && openfile->softmark) {
+ 				openfile->mark = NULL;
+ 				refresh_needed = TRUE;
+ 			}
+-- 
+2.43.0
+
